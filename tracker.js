@@ -65,9 +65,13 @@ class Tracker {
       t.fx = t.fx || {}; t.fy = t.fy || {};
       const ox = oneEuro(t.fx, d.x, dtr), oy = oneEuro(t.fy, d.y, dtr);
       const speed = Math.hypot(t.fx.dx, t.fy.dx);                                    // how fast they are really moving (picture widths per second)
-      t.moving = speed > 0.45 * t.s;                                                  // walking pace and up
-      if (t.moving || Math.hypot(ox - t.tx, oy - t.ty) > 0.12 * t.s) { t.tx = ox; t.ty = oy; }   // moving: follow every update; resting: ignore jitter
-      t.evx = t.moving ? t.fx.dx : 0; t.evy = t.moving ? t.fy.dx : 0;                 // used to glide the drawing between detections
+      t.moving = speed > 0.45 * t.s;
+      // soft dead-zone: movement smaller than ~10% of the person's width is ignored (no shaking when still), but past that the target
+      // follows continuously, trailing by at most that slack. No hold-then-jump, so slow movement stays smooth.
+      const ex = ox - t.tx, ey = oy - t.ty, ed = Math.hypot(ex, ey), dz = 0.10 * t.s, otx = t.tx, oty = t.ty;
+      if (ed > dz) { const f = (ed - dz) / ed; t.tx += ex * f; t.ty += ey * f; }
+      const tvx = (t.tx - otx) / dtr, tvy = (t.ty - oty) / dtr;
+      t.evx = 0.5 * (t.evx || 0) + 0.5 * tvx; t.evy = 0.5 * (t.evy || 0) + 0.5 * tvy;   // target velocity, used to glide the drawing between detections
       if (Math.abs(d.s - t.s) > 0.12 * t.s) t.s += (d.s - t.s) * 0.3;
       t.seen = now;
       if (d.insideExp) t.outSince = 0; else if (!t.outSince) t.outSince = now;
@@ -171,9 +175,9 @@ class Tracker {
   }
 
   step(dt, now) { // smooth motion for drawing, every screen frame
-    const k = 1 - Math.exp(-dt / 0.085), ks = 1 - Math.exp(-dt / 0.18);
+    const k = 1 - Math.exp(-dt / 0.07), ks = 1 - Math.exp(-dt / 0.18);
     for (const t of this.tracks) {
-      const age = now && t.updAt ? Math.min(0.12, Math.max(0, (now - t.updAt) / 1000)) : 0;   // glide ahead for up to 120 ms while waiting for the next detection
+      const age = now && t.updAt ? Math.min(0.1, Math.max(0, (now - t.updAt) / 1000)) : 0;   // glide ahead for up to 120 ms while waiting for the next detection
       const gx = t.tx + (t.evx || 0) * age, gy = t.ty + (t.evy || 0) * age;
       t.x += (gx - t.x) * k; t.y += (gy - t.y) * k;
       t.rs = (t.rs === undefined ? t.s : t.rs) + (t.s - (t.rs === undefined ? t.s : t.rs)) * ks;   // size glides too

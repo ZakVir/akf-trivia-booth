@@ -184,14 +184,24 @@
     var inputTensor = new ort.Tensor('float32', inputData, [1, 3, S, S]);
 
     var session = null, provider = null, errors = [];
+    var busyTries = 0;   // ORT builds one session at a time: "Session already started" means an earlier (failed/slow) create is still finishing, so wait and retry
     for (var pi = 0; pi < providers.length; pi++) {
       var p = providers[pi];
       if (p === 'webgpu' && !(typeof navigator !== 'undefined' && navigator.gpu)) { errors.push('webgpu: navigator.gpu missing'); continue; }
       try {
-        var s = await ort.InferenceSession.create(bytes, { executionProviders: [p], graphOptimizationLevel: 'all' });
-        await s.run({ [s.inputNames[0]]: inputTensor });        // warm-up; WebGPU often fails here
+        // a provider that hangs (seen with WebGPU on some GPUs / software GPUs) must not freeze loading: give up after 20 s and try the next one
+        var tmo, guard = new Promise(function (_, rej) { tmo = setTimeout(function () { rej(new Error('timed out after 20 s')); }, 20000); });
+        var s;
+        try {
+          s = await Promise.race([(async function () {
+            var s0 = await ort.InferenceSession.create(bytes, { executionProviders: [p], graphOptimizationLevel: 'all' });
+            await s0.run({ [s0.inputNames[0]]: inputTensor });   // warm-up; WebGPU often fails here
+            return s0;
+          })(), guard]);
+        } finally { clearTimeout(tmo); }
         session = s; provider = p; break;
       } catch (e) {
+        if (/already started/i.test(String(e && e.message || e)) && busyTries++ < 12) { await new Promise(function (r) { setTimeout(r, 2000); }); pi--; continue; }
         errors.push(p + ': ' + (e && e.message || e));
         log('YoloPose provider ' + p + ' failed: ' + (e && e.message || e));
       }

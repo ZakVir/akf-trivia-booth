@@ -356,7 +356,7 @@ const Cam = (() => {
             det.ms = det.ms ? det.ms * 0.8 + (performance.now() - t0) * 0.2 : performance.now() - t0;
             for (const p of ppl) { const d = cocoToDet(p); if (d) dets.push(d); }
             // no WebGPU and too slow? fall back to the lighter MediaPipe model automatically
-            if (cfg.engine === 'auto' && yolo.provider === 'wasm') { if (det.ms <= 250) slowN = 0; else if (++slowN >= 4) { try { yolo.dispose && yolo.dispose(); } catch (e) {} yolo = null; yoloFailed = true; yoloFailedAt = performance.now(); det.ms = 0; det.err = 'YOLO is too slow without WebGPU here, switched to MediaPipe.'; } }
+            if (cfg.engine === 'auto' && yolo.provider === 'wasm') { if (det.ms <= 350) slowN = 0; else if (++slowN >= 10) { try { yolo.dispose && yolo.dispose(); } catch (e) {} yolo = null; yoloFailed = true; yoloFailedAt = performance.now(); det.yoloNote = det.err = 'YOLO is too slow without WebGPU here (' + Math.round(det.ms) + ' ms a frame), switched to MediaPipe.'; det.ms = 0; } }
           } else {
             infer = true;
             const poses = cfg.mode === 'crowd' ? crowdPoses() : (landmarker.detectForVideo(video, t0).landmarks || []);
@@ -377,7 +377,7 @@ const Cam = (() => {
       if (!infer) console.error('[cam] problem outside the detector', e);                 // not the detector's fault: do not swap engines for it
       else if (++errN >= 3) {
         errN = 0; det.state = 'loading';
-        if (yolo) { try { yolo.dispose && yolo.dispose(); } catch (e2) {} yolo = null; yoloFailed = true; yoloFailedAt = performance.now(); det.err = 'YOLO stopped working, switched to MediaPipe: ' + det.err; }
+        if (yolo) { try { yolo.dispose && yolo.dispose(); } catch (e2) {} yolo = null; yoloFailed = true; yoloFailedAt = performance.now(); det.yoloNote = det.err = 'YOLO stopped working, switched to MediaPipe: ' + det.err; }
         else dropLandmarker();
       } else det.state = 'error';
     }
