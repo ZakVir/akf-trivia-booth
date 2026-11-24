@@ -268,7 +268,7 @@ if (/laptop/.test(location.search)) Object.assign(S.cam, { on: true, sim: false,
 fitPreview(); renderHost();
 $('preview').addEventListener('load', () => { commit(); if (!SOLO) CH.postMessage({ type: 'cam-snap', on: true, preview: true }); });
 document.body.classList.add('solo');
-$('preview').src = 'audience.html';
+$('preview').src = 'audience.html';           // the only load: host.html leaves the frame empty so it is not loaded twice
 
 /* Full screen: the live view fills the whole page (button / key P / Esc). Replays take over automatically, then give it back. */
 let fsManual = false, fsReplay = false;
