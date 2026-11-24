@@ -191,14 +191,15 @@
       try {
         // a provider that hangs (seen with WebGPU on some GPUs / software GPUs) must not freeze loading: give up after 20 s and try the next one
         var tmo, guard = new Promise(function (_, rej) { tmo = setTimeout(function () { rej(new Error('timed out after 20 s')); }, 20000); });
-        var s;
-        try {
-          s = await Promise.race([(async function () {
-            var s0 = await ort.InferenceSession.create(bytes, { executionProviders: [p], graphOptimizationLevel: 'all' });
-            await s0.run({ [s0.inputNames[0]]: inputTensor });   // warm-up; WebGPU often fails here
-            return s0;
-          })(), guard]);
-        } finally { clearTimeout(tmo); }
+        var s, inner = (async function () {
+          var s0 = await ort.InferenceSession.create(bytes, { executionProviders: [p], graphOptimizationLevel: 'all' });
+          try { await s0.run({ [s0.inputNames[0]]: inputTensor }); }   // warm-up; WebGPU often fails here
+          catch (we) { try { s0.release(); } catch (e2) {} throw we; }
+          return s0;
+        })();
+        try { s = await Promise.race([inner, guard]); }
+        catch (te) { inner.then(function (late) { try { late.release(); } catch (e2) {} }, function () {}); throw te; }   // timed out: free the session if it shows up later
+        finally { clearTimeout(tmo); }
         session = s; provider = p; break;
       } catch (e) {
         if (/already started/i.test(String(e && e.message || e)) && busyTries++ < 12) { await new Promise(function (r) { setTimeout(r, 2000); }); pi--; continue; }
@@ -249,7 +250,7 @@
       chain = run.catch(function () {});
       return run;
     };
-    det.dispose = function () { try { return session.release(); } catch (e) {} };
+    det.dispose = function () { var c = chain; chain = new Promise(function () {}); return c.then(function () { try { return session.release(); } catch (e) {} }); };   // wait for a running detect, then release; later detects never start
     return det;
   }
 

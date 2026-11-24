@@ -115,7 +115,7 @@ class Tracker {
         else if (now - this.close[key] > 600) { dead.add(a.born > b.born ? a : b); delete this.close[key]; }
       } else delete this.close[key];
     }
-    if (dead.size) this.tracks = this.tracks.filter(t => !dead.has(t));
+    if (dead.size) { this.tracks = this.tracks.filter(t => !dead.has(t)); const ids = new Set([...dead].map(t => String(t.id))); for (const k in this.close) if (k.split('-').some(x => ids.has(x))) delete this.close[k]; }
     this.lost = this.lost.filter(l => now - l.at < 20000);
   }
 
@@ -130,14 +130,14 @@ class Tracker {
     if (d.raised || stillUp) {
       if (!t.rc) {
         let at = now;
-        if (pwy !== undefined && d.wy !== undefined && pline !== undefined && pwy >= pline) {
+        if (pwy !== undefined && d.wy !== undefined && pline !== undefined && pwy >= pline && now - pT <= 250) {   // only between two close detections: never back-date across a tracking gap
           const s0 = pline - pwy, s1 = d.line - d.wy;                       // signed height above the line: before (<0) and now (>0)
           if (s1 > s0) at = pT + Math.min(1, Math.max(0, -s0 / (s1 - s0))) * (now - pT);
         }
         t.rcStart = at;
       }
       t.rc++; t.low = 0; if (d.raised) t.hand = { x: d.hx, y: d.hy };
-      if (!t.raised && now - t.rcStart >= HOLD_MS) { t.raised = true; this.events.push({ color: t.color, at: t.rcStart, hand: t.hand }); }
+      if (!t.raised && t.rc >= 2 && now - t.rcStart >= HOLD_MS) { t.raised = true; this.events.push({ color: t.color, at: t.rcStart, hand: t.hand }); }
     } else {
       if (t.rc && !t.raised) t.falseStarts = (t.falseStarts || 0) + 1;       // started to raise, changed their mind
       t.rc = 0;
@@ -169,7 +169,7 @@ class Tracker {
       const used = new Set(this.tracks.map(c => c.color));
       const l = this.lost.filter(l => l.emb && !used.has(l.color) && dist(l.emb, it.emb) < 0.3 && now - l.at < 20000)[0];
       if (l && same > 0.5) {                                              // looks like someone who left earlier
-        if (++t.mis >= 3) { this.cool[t.color] = now; t.color = l.color; t.emb = Float32Array.from(it.emb); t.mis = 0; this.lost.splice(this.lost.indexOf(l), 1); }
+        if (++t.mis >= 3) { (this.swapQ = this.swapQ || []).push([t.color, l.color]); this.cool[t.color] = now; t.color = l.color; t.emb = Float32Array.from(it.emb); t.mis = 0; this.lost.splice(this.lost.indexOf(l), 1); }
       } else t.mis = 0;
     }
   }

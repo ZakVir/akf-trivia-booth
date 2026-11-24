@@ -251,7 +251,7 @@
       return job;
     };
     r.embed = function (source, box) { return r.embedMany(source, [box]).then(function (a) { return a[0]; }); };
-    r.dispose = function () { try { return session.release(); } catch (e) {} };
+    r.dispose = function () { var c = chain; chain = new Promise(function () {}); return c.then(function () { try { return session.release(); } catch (e) {} }); };   // wait for a running job, then release
     r._prepare = function (source, box) {                       // test hook: preprocessed NCHW floats of one crop
       var wh = srcSize(source); prepare(source, wh[0], wh[1], box, 0); return inputData.slice(0, PIX);
     };

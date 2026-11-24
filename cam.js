@@ -11,6 +11,7 @@ const Cam = (() => {
   const tracker = new Tracker();
 
   let cfg = { on: false, deviceId: '', detect: true, sim: false, simN: 5, mirror: true, showQuad: true, kites: true, gpu: false, detHz: 12, mode: 'fast', sens: 'normal', engine: 'auto', handSens: 'normal', simDup: false, quad: DEFAULT_QUAD };
+  const badIds = new Set();
   let infer = false, detGen = 0, startSeq = 0, loadFailAt = 0, yoloFailedAt = 0, previewSeen = false, reid = null, reidFailed = false, reidBusy = false, lastEmb = 0, errN = 0, autoDevice = '', stream = null, phase = 'off', err = '', label = '', devices = [], retryT = null, fallbackTried = false;
   let det = { state: 'off', ms: 0, hz: 0, err: '' }, landmarker = null, yolo = null, yoloFailed = false, engineName = '', slowN = 0, loading = false, lastDetEnd = 0, detCount = 0, detT = performance.now();
   let people = { frame: 0, square: 0 }, lastLive = '', snapOn = false, snapT = 0, fps = 0, fpsN = 0, fpsT = performance.now();
@@ -49,13 +50,16 @@ const Cam = (() => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { phase = 'error'; err = 'This browser has no camera API (open over http://localhost, not a file).'; report(); return; }
     phase = 'asking'; err = ''; report();
     const c = { video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60, max: 120 } }, audio: false };
-    const want = cfg.deviceId || autoDevice;
+    const want = autoDevice || cfg.deviceId;                                      // an automatic re-pick (e.g. saved camera found under a new id) wins over the stale saved id
     if (want && !fallbackTried) c.video.deviceId = { exact: want };
     let got;
     try { got = await navigator.mediaDevices.getUserMedia(c); }
     catch (e) {
       if (my !== startSeq) return;
-      if (e.name === 'OverconstrainedError' && cfg.deviceId && !fallbackTried) { fallbackTried = true; err = 'Chosen camera not found, using default.'; return start(); }
+      if ((e.name === 'OverconstrainedError' || e.name === 'NotFoundError') && want && c.video.deviceId) {
+        if (want === autoDevice) { badIds.add(autoDevice); autoDevice = ''; return start(); }             // the camera we picked ourselves is gone (unplugged iPhone): choose again
+        if (!fallbackTried) { fallbackTried = true; err = 'Chosen camera not found, using default.'; return start(); }
+      }
       phase = e.name === 'NotAllowedError' ? 'noperm' : 'error'; err = (e.name || 'Error') + (e.message ? ': ' + e.message : '');
       report(); scheduleRetry(); return;
     }
@@ -64,11 +68,11 @@ const Cam = (() => {
     if (t0v && isBlockedCam(t0v.label)) {                                              // the browser handed us a blocked camera (e.g. Sony Imaging Edge): refuse it
       got.getTracks().forEach(t => t.stop());
       await refreshDevices();                                                          // labels are readable now that permission was granted
-      const alt = devices.slice().sort((a, b) => a.rank - b.rank)[0];
+      const alt = devices.filter(d => !badIds.has(d.id)).sort((a, b) => a.rank - b.rank)[0];
       if (alt && alt.id !== autoDevice) { autoDevice = alt.id; return start(); }
       phase = 'error'; err = 'The only camera found is blocked (' + t0v.label + '). Connect or enable another camera.'; report(); return;
     }
-    stream = got; fallbackTried = false;
+    stream = got; fallbackTried = false; badIds.clear();
     video.srcObject = stream;
     try { await video.play(); } catch (e) {}
     if (my !== startSeq) return;
@@ -85,7 +89,7 @@ const Cam = (() => {
       const byLabel = cfg.deviceLabel && devices.find(d => d.label === cfg.deviceLabel);
       let best = null;
       if (cfg.deviceId && !devices.some(d => d.id === cfg.deviceId) && byLabel) best = byLabel;            // saved id is stale: find it by name
-      else if (!cfg.deviceId || !devices.some(d => d.id === cfg.deviceId)) best = devices.slice().sort((a, b) => a.rank - b.rank)[0];     // no pick, or the pick is gone/blocked
+      else if (!cfg.deviceId || !devices.some(d => d.id === cfg.deviceId)) best = devices.filter(d => !badIds.has(d.id)).sort((a, b) => a.rank - b.rank)[0];     // no pick, or the pick is gone/blocked
       const cur = devices.find(d => d.id === curId || d.label === label);
       if (best && best.id !== (cur && cur.id) && (!cur || best.rank < cur.rank || (cfg.deviceId && best === byLabel))) { autoDevice = best.id; return start(); }
     }
@@ -130,9 +134,16 @@ const Cam = (() => {
         let y = await mk(cached === 'wasm' ? ['wasm'] : ['webgpu', 'wasm']);
         // First run on this Mac: WebGPU is not always the fastest (multi-threaded wasm can win), so measure both and keep the quicker one.
         if (!cached && y.provider === 'webgpu') {
-          const t1 = await benchYolo(y); det.bench = `webgpu ${Math.round(t1)} ms`;
+          let t1 = Infinity;
+          try { t1 = await benchYolo(y); det.bench = `webgpu ${Math.round(t1)} ms`; } catch (e1) { det.bench = 'webgpu failed: ' + ((e1 && e1.message) || e1); }
           if (t1 > 90) {
-            try { const w = await mk(['wasm']), t2 = await benchYolo(w); det.bench += `, wasm ${Math.round(t2)} ms`; if (t2 < t1 * 0.9) { try { y.dispose && y.dispose(); } catch (e3) {} y = w; } else { try { w.dispose && w.dispose(); } catch (e3) {} } } catch (e2) {}
+            let w = null;
+            try {
+              w = await mk(['wasm']); const t2 = await benchYolo(w); det.bench += `, wasm ${Math.round(t2)} ms`;
+              if (t2 < t1 * 0.9) { const old = y; y = w; w = null; try { old.dispose && old.dispose(); } catch (e3) {} }
+            } catch (e2) { det.bench += ', wasm failed'; }
+            if (w) { try { w.dispose && w.dispose(); } catch (e3) {} }
+            if (t1 === Infinity && y.provider === 'webgpu') throw new Error(det.bench);   // neither provider could run a detection
           }
           try { localStorage.setItem(cacheKey, y.provider); } catch (e) {}
         }
@@ -172,16 +183,16 @@ const Cam = (() => {
       for (const i of [9, 10]) {
         if (!k[i]) continue;
         const up2 = k[i].v > 0.35 && k[i].y < line;
-        wr.push({ x: k[i].x, y: k[i].y, up: up2 });
+        wr.push({ x: k[i].x, y: k[i].y, up: up2, sure: k[i].v > 0.35 });
         if (up2) { raised = true; hx = k[i].x; hy = k[i].y; }
       }
       dbg = { line, x: sh.x, wr };
-      wy = wr.length ? Math.min(...wr.map(w => w.y)) : undefined; wline = line; wrel = sh.y - Math.max(0.15, thr - 0.5) * u;
+      const sure = wr.filter(w => w.sure); wy = sure.length ? Math.min(...sure.map(w => w.y)) : undefined;   // a guessed (hidden) wrist must not keep a hand 'up' wline = line; wrel = sh.y - Math.max(0.15, thr - 0.5) * u;
     }
     let x0 = 9, y0 = 9, x1 = -9, y1 = -9;                         // torso box (no arms) for duplicate checks and clothing colour
     for (const i of [0, 5, 6, 11, 12]) if (ok(i, 0.25)) { x0 = Math.min(x0, k[i].x); y0 = Math.min(y0, k[i].y); x1 = Math.max(x1, k[i].x); y1 = Math.max(y1, k[i].y); }
     return { x: top.x, y: top.y, s: Math.max(0.04, s), score: p.score, good: boxOnly || ((ok(0) || eyes.length > 0) && haveSh), dbg, box: p.box,
-      bbox: { x0, y0: Math.min(y0, top.y), x1, y1 }, raised, hx, hy, wy, line: wline, release: wrel, inside: cfg.ignoreQuad || pointInQuad(foot, cfg.quad, 1), insideExp: cfg.ignoreQuad || pointInQuad(foot, cfg.quad, 1.12) };
+      bbox: x1 > x0 ? { x0, y0: Math.min(y0, top.y), x1, y1 } : { x0: p.box.x0, y0: p.box.y0, x1: p.box.x1, y1: p.box.y1 }, raised, hx, hy, wy, line: wline, release: wrel, inside: cfg.ignoreQuad || pointInQuad(foot, cfg.quad, 1), insideExp: cfg.ignoreQuad || pointInQuad(foot, cfg.quad, 1.12) };
   }
 
   function dropLandmarker() { if (landmarker) { try { landmarker.close(); } catch (e) {} landmarker = null; } }
@@ -208,11 +219,11 @@ const Cam = (() => {
       for (const w of [lm[15], lm[16]]) {
         if (!w) continue;
         const up = (w.visibility == null || w.visibility > 0.35) && w.y < line;
-        wr.push({ x: w.x, y: w.y, up });
+        wr.push({ x: w.x, y: w.y, up, sure: w.visibility == null || w.visibility > 0.35 });
         if (up) { raised = true; hx = w.x; hy = w.y; }
       }
       dbg = { line, x: sh.x, wr };
-      wy = wr.length ? Math.min(...wr.map(w => w.y)) : undefined; wline = line; wrel = sh.y - Math.max(0.15, thr - 0.5) * u;
+      const sure = wr.filter(w => w.sure); wy = sure.length ? Math.min(...sure.map(w => w.y)) : undefined;   // a guessed (hidden) wrist must not keep a hand 'up' wline = line; wrel = sh.y - Math.max(0.15, thr - 0.5) * u;
     }
     let x0 = 9, y0 = 9, x1 = -9, y1 = -9;
     for (const i of [0, 11, 12, 23, 24]) { const p = lm[i]; if (p && (p.visibility == null || p.visibility > 0.3)) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); } }
@@ -260,17 +271,23 @@ const Cam = (() => {
   }
 
   /* a tiny clothing-colour fingerprint of each person's torso, so two people who cross paths keep their own colors */
-  const appCv = document.createElement('canvas'); appCv.width = 12; appCv.height = 16;
+  // One small copy of the picture per detection round (not one full-size read per person): every torso is sampled from it.
+  const AW = 192, AH = 108, appCv = document.createElement('canvas'); appCv.width = AW; appCv.height = AH;
   const appG = appCv.getContext('2d', { willReadFrequently: true });
-  function appearance(d) {
-    if (!(phase === 'live' && !cfg.sim) || !video.videoWidth || !d.bbox) return null;
+  function appFrame() {
+    if (!(phase === 'live' && !cfg.sim) || !video.videoWidth) return null;
+    try { appG.drawImage(video, 0, 0, AW, AH); return appG.getImageData(0, 0, AW, AH).data; } catch (e) { return null; }
+  }
+  function appearance(d, px) {
+    if (!px || !d.bbox) return null;
     const b = d.bbox, x0 = Math.max(0, b.x0), x1 = Math.min(1, b.x1), y0 = Math.max(0, b.y0 + (b.y1 - b.y0) * 0.3), y1 = Math.min(1, b.y1);
     if (x1 - x0 < 0.02 || y1 - y0 < 0.02) return null;
-    const vw = video.videoWidth, vh = video.videoHeight;
-    try { appG.drawImage(video, x0 * vw, y0 * vh, (x1 - x0) * vw, (y1 - y0) * vh, 0, 0, 12, 16); } catch (e) { return null; }
-    const px = appG.getImageData(0, 0, 12, 16).data, h = new Float32Array(64);
-    for (let i = 0; i < px.length; i += 4) h[(px[i] >> 6) * 16 + (px[i + 1] >> 6) * 4 + (px[i + 2] >> 6)]++;
-    let sum = 0; for (let i = 0; i < 64; i++) sum += h[i]; for (let i = 0; i < 64; i++) h[i] /= sum;
+    const h = new Float32Array(64);
+    for (let j = 0; j < 16; j++) for (let i = 0; i < 12; i++) {          // 12 x 16 sample grid over the torso
+      const x = Math.min(AW - 1, Math.floor((x0 + (i + 0.5) / 12 * (x1 - x0)) * AW)), y = Math.min(AH - 1, Math.floor((y0 + (j + 0.5) / 16 * (y1 - y0)) * AH)), o = (y * AW + x) * 4;
+      h[(px[o] >> 6) * 16 + (px[o + 1] >> 6) * 4 + (px[o + 2] >> 6)]++;
+    }
+    for (let i = 0; i < 64; i++) h[i] /= 192;
     return h;
   }
 
@@ -278,10 +295,12 @@ const Cam = (() => {
   async function ensureReId() {
     if (reid || reidFailed || typeof ReId === 'undefined' || cfg.reid === false || !yolo) return;
     reidFailed = true;                                                   // only try once per engine start
+    const gen = detGen;
     try {
       const r = await ReId.create({ model: yolo.provider === 'webgpu' ? 'ain' : 'x025', ortBase: 'vendor/ort/', modelBase: 'models/', providers: ['webgpu', 'wasm'] });
+      if (gen !== detGen || !yolo) { try { r.dispose && r.dispose(); } catch (e2) {} if (gen === detGen) reidFailed = false; return; }   // settings changed while loading
       reid = r; reidFailed = false; det.reid = `OSNet ${r.model || ''} (${r.provider})`; report();
-    } catch (e) { det.reidErr = (e && e.message) || String(e); }
+    } catch (e) { if (gen === detGen) det.reidErr = (e && e.message) || String(e); }
   }
   function bodyBox(d) {
     if (d.box) return d.box;
@@ -295,17 +314,20 @@ const Cam = (() => {
     const cand = dets.filter(d => d.good && d.inside && (d.score || 1) >= 0.5);
     if (!cand.length) return;
     reidBusy = true; lastEmb = t0;
-    reid.embedMany(video, cand.map(bodyBox)).then(embs => {
-      det.reidMs = Math.round(reid.lastMs || 0);
+    const r = reid, gen = detGen;
+    r.embedMany(video, cand.map(bodyBox)).then(embs => {
+      if (gen !== detGen || r !== reid) return;                          // detector was reset meanwhile: these results are stale
+      det.reidMs = Math.round(r.lastMs || 0);
       tracker.applyEmbeddings(cand.map((d, i) => ({ x: d.x, y: d.y, s: d.s, emb: embs[i] })), performance.now());
       for (const [a, b] of tracker.drainSwaps()) if (window.Buzz && Buzz.swapColors) Buzz.swapColors(a, b);
       pushTracks();
-    }).catch(e => { det.reidErr = (e && e.message) || String(e); reid = null; reidFailed = true; }).finally(() => { reidBusy = false; });
+    }).catch(e => { if (gen !== detGen || r !== reid) return; det.reidErr = (e && e.message) || String(e); try { r.dispose && r.dispose(); } catch (e2) {} reid = null; reidFailed = true; }).finally(() => { reidBusy = false; });
   }
 
   function feed(dets, now) {
     dets = cleanDets(dets);
-    for (const d of dets) d.app = appearance(d);
+    const px = dets.length ? appFrame() : null;
+    for (const d of dets) d.app = appearance(d, px);
     lastDets = dets; people.frame = dets.length; people.square = dets.filter(d => d.inside).length;
     tracker.update(dets, now);
     const ev = tracker.drain(); if (ev.length && window.Buzz) Buzz.raise(ev);
@@ -343,20 +365,28 @@ const Cam = (() => {
     try {
       if (cfg.sim) { det.state = 'running'; simStep(now); }
       else if (cfg.on && cfg.detect && phase === 'live' && !document.hidden) {
+        if (yoloFailed && cfg.engine === 'auto' && now - yoloFailedAt > 180000) yoloFailed = false;   // give YOLO another chance after 3 minutes
         if (landmarker && !yolo && !yoloFailed && cfg.engine !== 'mediapipe' && typeof YoloPose !== 'undefined') dropLandmarker();   // YOLO is allowed again: switch back
         if (!yolo && !landmarker) await ensureDetector();
         else if (video.readyState >= 2 && video.videoWidth) {
           const t0 = performance.now();
           let dets = [];
           if (yolo) {
+            const y = yolo, gen = detGen;                                  // this round's detector: a reset while we wait must not mix engines
             let ppl; infer = true;
-            if (cfg.mode === 'crowd') { const a = await yolo.detect(video, { x: 0, y: 0, w: 0.6, h: 1 }), b = await yolo.detect(video, { x: 0.4, y: 0, w: 0.6, h: 1 }); ppl = a.concat(b); }
-            else ppl = await yolo.detect(video);
+            if (cfg.mode === 'crowd') {
+              const a = await y.detect(video, { x: 0, y: 0, w: 0.6, h: 1 }), b = gen === detGen ? await y.detect(video, { x: 0.4, y: 0, w: 0.6, h: 1 }) : [];
+              // each person comes from ONE half: the left half keeps who it sees whole (plus anyone wide enough to cross both seams),
+              // the right half keeps only people starting right of the left seam. No half-cut ghosts at the seams.
+              ppl = a.filter(p => p.box.x1 < 0.585 || p.box.x0 < 0.415).concat(b.filter(p => p.box.x0 > 0.415));
+            }
+            else ppl = await y.detect(video);
             infer = false;
+            if (gen !== detGen || y !== yolo) { setTimeout(detectLoop, 0); return; }
             det.ms = det.ms ? det.ms * 0.8 + (performance.now() - t0) * 0.2 : performance.now() - t0;
             for (const p of ppl) { const d = cocoToDet(p); if (d) dets.push(d); }
             // no WebGPU and too slow? fall back to the lighter MediaPipe model automatically
-            if (cfg.engine === 'auto' && yolo.provider === 'wasm') { if (det.ms <= 350) slowN = 0; else if (++slowN >= 10) { try { yolo.dispose && yolo.dispose(); } catch (e) {} yolo = null; yoloFailed = true; yoloFailedAt = performance.now(); det.yoloNote = det.err = 'YOLO is too slow without WebGPU here (' + Math.round(det.ms) + ' ms a frame), switched to MediaPipe.'; det.ms = 0; } }
+            if (cfg.engine === 'auto' && y.provider === 'wasm') { if (det.ms <= 350) slowN = 0; else if (++slowN >= 10) { try { yolo.dispose && yolo.dispose(); } catch (e) {} yolo = null; yoloFailed = true; yoloFailedAt = performance.now(); det.yoloNote = det.err = 'YOLO is too slow without WebGPU here (' + Math.round(det.ms) + ' ms a frame), switched to MediaPipe.'; det.ms = 0; } }
           } else {
             infer = true;
             const poses = cfg.mode === 'crowd' ? crowdPoses() : (landmarker.detectForVideo(video, t0).landmarks || []);
@@ -450,6 +480,7 @@ const Cam = (() => {
     const old = cfg; cfg = Object.assign({}, cfg, c);
     video.style.transform = pvimg.style.transform = cfg.mirror ? 'scaleX(-1)' : 'none';
     if (PREV) { report(); return; }
+    if (old.deviceId !== cfg.deviceId) { autoDevice = ''; badIds.clear(); }      // a new pick by the host always wins
     if (old.on !== cfg.on || (old.deviceId !== cfg.deviceId && cfg.on)) { fallbackTried = false; start(); }
     if (old.gpu !== cfg.gpu || old.mode !== cfg.mode || old.sens !== cfg.sens || old.engine !== cfg.engine) dropDetector();
     if (!cfg.detect && (yolo || landmarker || reid)) dropDetector();
