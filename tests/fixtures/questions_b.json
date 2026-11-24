@@ -1,0 +1,5 @@
+{"questions":[
+  {"question":"Capital of Japan?","correct_answer":"Tokyo","incorrect_answers":["Kyoto","Osaka","Nagoya"],"difficulty":"easy"},
+  {"prompt":"Which is a fruit?","options":["Carrot","Apple","Leek"],"correctIndex":1,"explanation":"Apples grow on trees."},
+  {"question":"Largest planet?","options":["Earth","Jupiter"],"answer":"Jupiter","difficulty":"hard",},
+]}

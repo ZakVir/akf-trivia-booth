@@ -1,0 +1,5 @@
+[
+  {"type":"mc","q":"What is 2+2?","choices":["3","4","5"],"answer":1,"fact":"Basic math","emoji":"➕","level":"kids"},
+  {"type":"free","q":"Name a color of the rainbow","answerText":"Red","level":"everyone"},
+  {"q":"Only one?","choices":["Lonely"]}
+]

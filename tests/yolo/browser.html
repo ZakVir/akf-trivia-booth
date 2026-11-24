@@ -1,0 +1,26 @@
+<!doctype html><meta charset="utf-8"><title>yolo-pose browser check</title>
+<body style="font:13px monospace"><pre id="o">running...</pre>
+<script src="../../yolo-pose.js"></script>
+<script>
+// Open http://localhost:8787/tests/yolo/browser.html?model=n&providers=webgpu,wasm  (via server.py)
+const q = new URLSearchParams(location.search), log = [];
+const say = s => { log.push(s); document.getElementById('o').textContent = log.join('\n'); };
+(async () => {
+  try {
+    say('crossOriginIsolated=' + crossOriginIsolated + ' navigator.gpu=' + !!navigator.gpu);
+    const img = new Image(); img.src = 'bus.jpg'; await img.decode();
+    const bmp = await createImageBitmap(img);
+    const t0 = performance.now();
+    const det = await YoloPose.create({ model: q.get('model') || 'n', providers: (q.get('providers') || 'webgpu,wasm').split(','), ortBase: '../../vendor/ort/', modelBase: '../../models/', log: say });
+    say('create ' + (performance.now() - t0).toFixed(0) + ' ms, provider=' + det.provider + ' threads=' + det.threads + ' errors=' + JSON.stringify(det.providerErrors));
+    let people; const ms = [], wall = [];
+    for (let i = 0; i < 20; i++) { const a = performance.now(); people = await det.detect(bmp); wall.push(performance.now() - a); ms.push(det.lastMs); }
+    ms.sort((a, b) => a - b); wall.sort((a, b) => a - b);
+    say('people=' + people.length + ' run median ' + ms[10].toFixed(1) + ' ms, detect() wall median ' + wall[10].toFixed(1) + ' ms');
+    people.forEach(p => say(' score ' + p.score.toFixed(2) + ' box ' + [p.box.x0, p.box.y0, p.box.x1, p.box.y1].map(v => v.toFixed(2)) + ' nose ' + p.kp[0].x.toFixed(2) + ',' + p.kp[0].y.toFixed(2)));
+    const crop = await det.detect(bmp, { x: 0, y: 0.3, w: 0.6, h: 0.7 });
+    say('crop (left 60%, lower 70%) people=' + crop.length + (crop[0] ? ' first x0=' + crop[0].box.x0.toFixed(2) : ''));
+    window.__result = { provider: det.provider, people: people.length, medianMs: ms[10], wallMs: wall[10], iso: crossOriginIsolated };
+  } catch (e) { say('ERROR ' + (e && e.stack || e)); window.__result = { error: String(e) }; }
+})();
+</script>

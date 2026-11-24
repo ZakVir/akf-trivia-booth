@@ -1,0 +1,484 @@
+/* Camera, person detection, tracking and kites. Runs ONLY in the TV window (audience.html)
+   so the laptop never processes video twice. Nothing is recorded or sent anywhere:
+   frames stay in memory; the host window only gets small preview stills while calibrating. */
+const Cam = (() => {
+  const W = 1148, H = 646;                      // size of the camera panel on the 1920x1080 stage
+  const PREV = new URLSearchParams(location.search).has('preview');   // the little copy inside the host window never opens the camera
+  const video = document.getElementById('video');
+  const pvimg = document.getElementById('pvimg');
+  let remoteItems = [], remoteFrameAt = 0, snapUntil = 0, lastKitePost = 0;
+  const cv = document.getElementById('kites'), ctx = cv.getContext('2d');
+  const tracker = new Tracker();
+
+  let cfg = { on: false, deviceId: '', detect: true, sim: false, simN: 5, mirror: true, showQuad: true, kites: true, gpu: false, detHz: 12, mode: 'fast', sens: 'normal', engine: 'auto', handSens: 'normal', simDup: false, quad: DEFAULT_QUAD };
+  let infer = false, detGen = 0, startSeq = 0, loadFailAt = 0, yoloFailedAt = 0, previewSeen = false, reid = null, reidFailed = false, reidBusy = false, lastEmb = 0, errN = 0, autoDevice = '', stream = null, phase = 'off', err = '', label = '', devices = [], retryT = null, fallbackTried = false;
+  let det = { state: 'off', ms: 0, hz: 0, err: '' }, landmarker = null, yolo = null, yoloFailed = false, engineName = '', slowN = 0, loading = false, lastDetEnd = 0, detCount = 0, detT = performance.now();
+  let people = { frame: 0, square: 0 }, lastLive = '', snapOn = false, snapT = 0, fps = 0, fpsN = 0, fpsT = performance.now();
+  let sim = null, lastFrame = performance.now(), lastDets = [], preferTried = false;
+  const snapCv = document.createElement('canvas'); snapCv.width = 640; snapCv.height = 360;
+
+  const post = m => CH.postMessage(m);
+  const showing = () => PREV ? (performance.now() - remoteFrameAt < 1500 || cfg.sim) : (phase === 'live' || cfg.sim);
+
+  /* ---------- status ---------- */
+  function report() {
+    document.body.classList.toggle('cam-live', showing());
+    if (PREV) return;
+    post({
+      type: 'cam-status', phase, err, label, devices, det: { ...det, ms: Math.round(det.ms) }, people, sim: cfg.sim, fps: Math.round(fps),
+      vw: video.videoWidth || 0, vh: video.videoHeight || 0, buf: (window.Buzz && Buzz.stats) ? Buzz.stats().count : 0, recFps: (window.Buzz && Buzz.stats) ? Buzz.stats().fps : 0, recSec: (window.Buzz && Buzz.stats) ? Buzz.stats().sec : 0,
+      screen: { x: screenX, y: screenY, w: screen.width, h: screen.height, fs: !!document.fullscreenElement, iw: innerWidth, ih: innerHeight }
+    });
+  }
+
+  /* ---------- camera ---------- */
+  async function refreshDevices() {
+    try { devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput' && !isBlockedCam(d.label)).map(d => ({ id: d.deviceId, label: d.label || 'Camera', virtual: isVirtualCam(d.label), rank: camRank(d.label, cfg.preferBuiltIn !== false) })); } catch (e) { devices = []; }
+    report();
+  }
+  function stopStream() {
+    if (stream) stream.getTracks().forEach(t => { t.onended = null; t.stop(); });
+    stream = null; video.srcObject = null;
+  }
+  function scheduleRetry() { clearTimeout(retryT); if (cfg.on) retryT = setTimeout(start, 3000); }
+  async function start() {
+    if (PREV) return;
+    const my = ++startSeq;
+    clearTimeout(retryT); stopStream();
+    if (!cfg.on) { phase = 'off'; report(); return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { phase = 'error'; err = 'This browser has no camera API (open over http://localhost, not a file).'; report(); return; }
+    phase = 'asking'; err = ''; report();
+    const c = { video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60, max: 120 } }, audio: false };
+    const want = cfg.deviceId || autoDevice;
+    if (want && !fallbackTried) c.video.deviceId = { exact: want };
+    let got;
+    try { got = await navigator.mediaDevices.getUserMedia(c); }
+    catch (e) {
+      if (my !== startSeq) return;
+      if (e.name === 'OverconstrainedError' && cfg.deviceId && !fallbackTried) { fallbackTried = true; err = 'Chosen camera not found, using default.'; return start(); }
+      phase = e.name === 'NotAllowedError' ? 'noperm' : 'error'; err = (e.name || 'Error') + (e.message ? ': ' + e.message : '');
+      report(); scheduleRetry(); return;
+    }
+    if (my !== startSeq) { got.getTracks().forEach(t => t.stop()); return; }          // a newer start() won: do not leak this camera stream
+    const t0v = got.getVideoTracks()[0];
+    if (t0v && isBlockedCam(t0v.label)) {                                              // the browser handed us a blocked camera (e.g. Sony Imaging Edge): refuse it
+      got.getTracks().forEach(t => t.stop());
+      await refreshDevices();                                                          // labels are readable now that permission was granted
+      const alt = devices.slice().sort((a, b) => a.rank - b.rank)[0];
+      if (alt && alt.id !== autoDevice) { autoDevice = alt.id; return start(); }
+      phase = 'error'; err = 'The only camera found is blocked (' + t0v.label + '). Connect or enable another camera.'; report(); return;
+    }
+    stream = got; fallbackTried = false;
+    video.srcObject = stream;
+    try { await video.play(); } catch (e) {}
+    if (my !== startSeq) return;
+    const tr = stream.getVideoTracks()[0];
+    label = tr ? tr.label : '';
+    if (tr) tr.onended = () => { phase = 'lost'; err = 'Camera disconnected. Retrying...'; stopStream(); tracker.clear(); report(); scheduleRetry(); };
+    phase = 'live'; err = ''; video.style.transform = cfg.mirror ? 'scaleX(-1)' : 'none';
+    await refreshDevices();
+    if (my !== startSeq) return;
+    // Choose the camera. The host's own pick (by id, or by name if the id changed) always wins. Otherwise use the best REAL camera:
+    // the Mac's own, then the iPhone. Virtual cameras (Sony Imaging Edge, OBS, ...) are never picked automatically.
+    if (!autoDevice) {
+      const curId = tr && tr.getSettings ? tr.getSettings().deviceId : '';
+      const byLabel = cfg.deviceLabel && devices.find(d => d.label === cfg.deviceLabel);
+      let best = null;
+      if (cfg.deviceId && !devices.some(d => d.id === cfg.deviceId) && byLabel) best = byLabel;            // saved id is stale: find it by name
+      else if (!cfg.deviceId || !devices.some(d => d.id === cfg.deviceId)) best = devices.slice().sort((a, b) => a.rank - b.rank)[0];     // no pick, or the pick is gone/blocked
+      const cur = devices.find(d => d.id === curId || d.label === label);
+      if (best && best.id !== (cur && cur.id) && (!cur || best.rank < cur.rank || (cfg.deviceId && best === byLabel))) { autoDevice = best.id; return start(); }
+    }
+    report();
+  }
+
+  /* ---------- detection ---------- */
+  const conf = () => ({ strict: 0.6, normal: 0.45, loose: 0.3 }[cfg.sens] || 0.45);
+  async function ensureLandmarker() {
+    if (landmarker || loading) return;
+    const gen = detGen;
+    loading = true; det.state = 'loading'; det.err = ''; report();
+    try {
+      const { FilesetResolver, PoseLandmarker } = await import('./vendor/mediapipe/vision_bundle.mjs');
+      const fs = await FilesetResolver.forVisionTasks('vendor/mediapipe/wasm');
+      landmarker = await PoseLandmarker.createFromOptions(fs, {
+        baseOptions: { modelAssetPath: 'models/pose_landmarker_lite.task', delegate: cfg.gpu ? 'GPU' : 'CPU' },
+        runningMode: cfg.mode === 'crowd' ? 'IMAGE' : 'VIDEO', numPoses: 8,
+        minPoseDetectionConfidence: conf(), minPosePresenceConfidence: conf(), minTrackingConfidence: conf()
+      });
+      if (gen !== detGen) { try { landmarker.close(); } catch (e2) {} landmarker = null; }          // settings changed while loading
+      else det.state = 'running';
+    } catch (e) { det.state = 'error'; det.err = (e && e.message) || String(e); loadFailAt = performance.now(); }
+    loading = false; report();
+  }
+  const benchCv = document.createElement('canvas'); benchCv.width = 1280; benchCv.height = 720;
+  async function benchYolo(y) {                                           // median ms of 6 detections on the live picture (or a blank frame)
+    let src = benchCv; if (video.videoWidth && video.readyState >= 2) src = video; else { const g = benchCv.getContext('2d'); g.fillStyle = '#777'; g.fillRect(0, 0, 1280, 720); }
+    const ms = []; for (let i = 0; i < 6; i++) { const a = performance.now(); await y.detect(src); ms.push(performance.now() - a); }
+    ms.sort((p, q) => p - q); return ms[Math.floor(ms.length / 2)];
+  }
+  const yconf = () => ({ strict: 0.5, normal: 0.35, loose: 0.25 }[cfg.sens] || 0.35);
+  async function ensureDetector() {
+    if (loading || performance.now() - loadFailAt < 5000) return;            // back off after a failed load instead of retrying 12 times a second
+    if (yoloFailed && cfg.engine === 'auto' && performance.now() - yoloFailedAt > 180000) yoloFailed = false;    // give YOLO another chance after 3 minutes
+    if (cfg.engine !== 'mediapipe' && !yoloFailed && typeof YoloPose !== 'undefined') {
+      loading = true; det.state = 'loading'; det.err = ''; report();
+      const size = cfg.engine === 'yolo-s' ? 's' : 'n', gen = detGen, cacheKey = 'akf-yolo-provider-' + size;
+      const mk = provs => YoloPose.create({ model: size, ortBase: 'vendor/ort/', modelBase: 'models/', providers: provs, scoreThr: yconf(), maxPeople: 10 });
+      let cached = ''; try { cached = localStorage.getItem(cacheKey) || ''; } catch (e) {}
+      try {
+        let y = await mk(cached === 'wasm' ? ['wasm'] : ['webgpu', 'wasm']);
+        // First run on this Mac: WebGPU is not always the fastest (multi-threaded wasm can win), so measure both and keep the quicker one.
+        if (!cached && y.provider === 'webgpu') {
+          const t1 = await benchYolo(y); det.bench = `webgpu ${Math.round(t1)} ms`;
+          if (t1 > 90) {
+            try { const w = await mk(['wasm']), t2 = await benchYolo(w); det.bench += `, wasm ${Math.round(t2)} ms`; if (t2 < t1 * 0.9) { try { y.dispose && y.dispose(); } catch (e3) {} y = w; } else { try { w.dispose && w.dispose(); } catch (e3) {} } } catch (e2) {}
+          }
+          try { localStorage.setItem(cacheKey, y.provider); } catch (e) {}
+        }
+        det.provErr = (y.providerErrors && y.providerErrors.length) ? y.providerErrors.join(' | ') : '';
+        if (gen !== detGen) { try { y.dispose && y.dispose(); } catch (e2) {} det.yoloNote = 'YOLO load discarded: settings changed while it loaded'; loading = false; return; }   // settings changed while loading
+        det.yoloNote = ''; yolo = y; engineName = `YOLO26${size} (${y.provider})`; det.engine = engineName; det.state = 'running'; slowN = 0;
+      } catch (e) { yoloFailed = true; yoloFailedAt = performance.now(); det.err = 'YOLO unavailable, using MediaPipe: ' + ((e && e.message) || e); det.yoloNote = det.err; console.error('[cam] YOLO failed', e); }
+      loading = false; report();
+      if (yolo) return;
+    }
+    await ensureLandmarker(); if (landmarker) { engineName = 'MediaPipe Lite'; det.engine = engineName; report(); }
+  }
+  function dropDetector() { detGen++; if (reid) { try { reid.dispose && reid.dispose(); } catch (e) {} } reid = null; reidFailed = false; det.reid = ''; dropLandmarker(); if (yolo) { try { yolo.dispose && yolo.dispose(); } catch (e) {} yolo = null; } yoloFailed = false; engineName = ''; det.engine = ''; }
+
+  /* YOLO gives COCO-17 keypoints (0 nose, 1/2 eyes, 3/4 ears, 5/6 shoulders, 7/8 elbows, 9/10 wrists, 11/12 hips, 15/16 ankles) */
+  function cocoToDet(p) {
+    const k = p.kp, ok = (i, t = 0.3) => k[i] && k[i].v > t;
+    const haveSh = ok(5) && ok(6);
+    const eyes = [1, 2].filter(i => ok(i)).map(i => k[i]);
+    const bw = p.box.x1 - p.box.x0, bh = p.box.y1 - p.box.y0;
+    const boxOnly = !ok(0) && !haveSh && !eyes.length;
+    if (boxOnly && !(p.score >= 0.5 && bh > 0.15)) return null;               // body clearly there but turned away / hidden: place the marker from the body box
+    const sh = haveSh ? { x: (k[5].x + k[6].x) / 2, y: (k[5].y + k[6].y) / 2 } : null;
+    const head = boxOnly ? { x: (p.box.x0 + p.box.x1) / 2, y: p.box.y0 + 0.07 * bh } : ok(0) ? { x: k[0].x, y: k[0].y } : eyes.length ? { x: eyes.reduce((a, e) => a + e.x, 0) / eyes.length, y: eyes.reduce((a, e) => a + e.y, 0) / eyes.length } : { x: sh.x, y: sh.y - 0.1 };
+    const up = sh ? Math.max(0.025, sh.y - head.y) : 0.06;
+    const top = { x: head.x, y: head.y - up * 0.9 };
+    let foot;
+    const ank = [15, 16].filter(i => ok(i)).map(i => k[i]);
+    if (ank.length) foot = { x: ank.reduce((a, e) => a + e.x, 0) / ank.length, y: ank.reduce((a, e) => a + e.y, 0) / ank.length };
+    else if (ok(11) && ok(12)) { const h = { x: (k[11].x + k[12].x) / 2, y: (k[11].y + k[12].y) / 2 }; foot = { x: h.x, y: h.y + (h.y - (sh ? sh.y : head.y)) * 1.8 }; }
+    else foot = { x: (sh || head).x, y: (sh || head).y + up * 6 };
+    foot.y = Math.min(foot.y, 1.2);
+    const s = haveSh ? Math.abs(k[5].x - k[6].x) : bw * 0.5;
+    let raised = false, hx = 0, hy = 0, dbg = null, wy, wline, wrel;
+    if (sh) {
+      const u = Math.max(0.02, sh.y - head.y), thr = { easy: 0.6, normal: 0.9, strict: 1.4 }[cfg.handSens] || 0.9, line = sh.y - thr * u, wr = [];
+      for (const i of [9, 10]) {
+        if (!k[i]) continue;
+        const up2 = k[i].v > 0.35 && k[i].y < line;
+        wr.push({ x: k[i].x, y: k[i].y, up: up2 });
+        if (up2) { raised = true; hx = k[i].x; hy = k[i].y; }
+      }
+      dbg = { line, x: sh.x, wr };
+      wy = wr.length ? Math.min(...wr.map(w => w.y)) : undefined; wline = line; wrel = sh.y - Math.max(0.15, thr - 0.5) * u;
+    }
+    let x0 = 9, y0 = 9, x1 = -9, y1 = -9;                         // torso box (no arms) for duplicate checks and clothing colour
+    for (const i of [0, 5, 6, 11, 12]) if (ok(i, 0.25)) { x0 = Math.min(x0, k[i].x); y0 = Math.min(y0, k[i].y); x1 = Math.max(x1, k[i].x); y1 = Math.max(y1, k[i].y); }
+    return { x: top.x, y: top.y, s: Math.max(0.04, s), score: p.score, good: boxOnly || ((ok(0) || eyes.length > 0) && haveSh), dbg, box: p.box,
+      bbox: { x0, y0: Math.min(y0, top.y), x1, y1 }, raised, hx, hy, wy, line: wline, release: wrel, inside: cfg.ignoreQuad || pointInQuad(foot, cfg.quad, 1), insideExp: cfg.ignoreQuad || pointInQuad(foot, cfg.quad, 1.12) };
+  }
+
+  function dropLandmarker() { if (landmarker) { try { landmarker.close(); } catch (e) {} landmarker = null; } }
+
+  function poseToDet(lm) {
+    const vis = p => p && (p.visibility == null || p.visibility > 0.4);
+    const nose = lm[0], ls = lm[11], rs = lm[12], lh = lm[23], rh = lm[24], la = lm[27], ra = lm[28];
+    const haveSh = vis(ls) && vis(rs);
+    if (!vis(nose) && !haveSh) return null;
+    const sh = haveSh ? { x: (ls.x + rs.x) / 2, y: (ls.y + rs.y) / 2 } : null;
+    const head = vis(nose) ? { x: nose.x, y: nose.y } : { x: sh.x, y: sh.y - 0.1 };
+    const up = sh ? Math.max(0.025, sh.y - head.y) : 0.06;
+    const top = { x: head.x, y: head.y - up * 0.9 };
+    let foot;
+    if (vis(la) || vis(ra)) { const a = [la, ra].filter(vis); foot = { x: a.reduce((s, p) => s + p.x, 0) / a.length, y: a.reduce((s, p) => s + p.y, 0) / a.length }; }
+    else if (vis(lh) && vis(rh)) { const h = { x: (lh.x + rh.x) / 2, y: (lh.y + rh.y) / 2 }; foot = { x: h.x, y: h.y + (h.y - (sh ? sh.y : head.y)) * 1.8 }; }
+    else foot = { x: (sh || head).x, y: (sh || head).y + up * 6 };
+    foot.y = Math.min(foot.y, 1.2);
+    const s = haveSh ? Math.abs(ls.x - rs.x) : 0.08;
+    // hand raised? wrist above the shoulder line by more than ~thr nose-to-shoulder lengths
+    let raised = false, hx = 0, hy = 0, dbg = null, wy, wline, wrel;
+    if (sh && vis(nose)) {
+      const u = Math.max(0.02, sh.y - nose.y), thr = { easy: 0.6, normal: 0.9, strict: 1.4 }[cfg.handSens] || 0.9, line = sh.y - thr * u, wr = [];
+      for (const w of [lm[15], lm[16]]) {
+        if (!w) continue;
+        const up = (w.visibility == null || w.visibility > 0.35) && w.y < line;
+        wr.push({ x: w.x, y: w.y, up });
+        if (up) { raised = true; hx = w.x; hy = w.y; }
+      }
+      dbg = { line, x: sh.x, wr };
+      wy = wr.length ? Math.min(...wr.map(w => w.y)) : undefined; wline = line; wrel = sh.y - Math.max(0.15, thr - 0.5) * u;
+    }
+    let x0 = 9, y0 = 9, x1 = -9, y1 = -9;
+    for (const i of [0, 11, 12, 23, 24]) { const p = lm[i]; if (p && (p.visibility == null || p.visibility > 0.3)) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); } }
+    const vv = p => (p && p.visibility != null) ? p.visibility : 0.6;
+    const score = (vv(nose) + vv(ls) + vv(rs)) / 3, good = vis(nose) && haveSh;
+    return { x: top.x, y: top.y, s: Math.max(0.04, s), score, good, dbg, bbox: { x0, y0: Math.min(y0, top.y), x1, y1 }, raised, hx, hy, wy, line: wline, release: wrel, inside: cfg.ignoreQuad || pointInQuad(foot, cfg.quad, 1), insideExp: cfg.ignoreQuad || pointInQuad(foot, cfg.quad, 1.12) };
+  }
+
+  /* one person = one detection: drop tiny background figures and merge overlapping / ghost poses */
+  function isDup(a, b) {
+    if (Math.hypot(a.x - b.x, a.y - b.y) < 0.55 * Math.max(a.s, b.s) + 0.015) return true;
+    const A = a.bbox, B = b.bbox;
+    if (A && B) {
+      const ix = Math.max(0, Math.min(A.x1, B.x1) - Math.max(A.x0, B.x0)), iy = Math.max(0, Math.min(A.y1, B.y1) - Math.max(A.y0, B.y0)), inter = ix * iy;
+      const aa = (A.x1 - A.x0) * (A.y1 - A.y0), ab = (B.x1 - B.x0) * (B.y1 - B.y0);
+      if (aa > 0 && ab > 0 && (inter / Math.min(aa, ab) > 0.6 || inter / (aa + ab - inter) > 0.45)) return true;
+    }
+    return false;
+  }
+  function cleanDets(dets) {
+    const minS = { strict: 0.04, normal: 0.022, loose: 0.012 }[cfg.sens] || 0.022;
+    const keep = [];
+    for (const d of dets.filter(d => d.s >= minS).sort((a, b) => b.score - a.score)) {
+      const k = keep.find(k => isDup(k, d));
+      if (!k) keep.push(d);
+      else if (d.raised && !k.raised) { k.raised = true; k.hx = d.hx; k.hy = d.hy; }     // a raised hand on a duplicate pose still counts
+    }
+    return keep;
+  }
+  /* Crowd mode: look at the whole picture AND zoomed left/right halves, so small or crowded people are found too */
+  const cropCv = document.createElement('canvas'), cropG = cropCv.getContext('2d');
+  function crowdPoses() {
+    const out = [], vw = video.videoWidth, vh = video.videoHeight;
+    for (const [x0, y0, w, h] of [[0, 0, 1, 1], [0, 0, 0.6, 1], [0.4, 0, 0.6, 1]]) {
+      let src = video;
+      if (w < 1 || h < 1) {
+        const cw = 960, ch = Math.max(2, Math.round(cw * (vh * h) / (vw * w)));
+        if (cropCv.width !== cw || cropCv.height !== ch) { cropCv.width = cw; cropCv.height = ch; }
+        cropG.drawImage(video, vw * x0, vh * y0, vw * w, vh * h, 0, 0, cw, ch); src = cropCv;
+      }
+      const res = landmarker.detect(src);
+      for (const lm of (res.landmarks || [])) out.push(lm.map(p => ({ x: x0 + p.x * w, y: y0 + p.y * h, visibility: p.visibility })));
+    }
+    return out;
+  }
+
+  /* a tiny clothing-colour fingerprint of each person's torso, so two people who cross paths keep their own colors */
+  const appCv = document.createElement('canvas'); appCv.width = 12; appCv.height = 16;
+  const appG = appCv.getContext('2d', { willReadFrequently: true });
+  function appearance(d) {
+    if (!(phase === 'live' && !cfg.sim) || !video.videoWidth || !d.bbox) return null;
+    const b = d.bbox, x0 = Math.max(0, b.x0), x1 = Math.min(1, b.x1), y0 = Math.max(0, b.y0 + (b.y1 - b.y0) * 0.3), y1 = Math.min(1, b.y1);
+    if (x1 - x0 < 0.02 || y1 - y0 < 0.02) return null;
+    const vw = video.videoWidth, vh = video.videoHeight;
+    try { appG.drawImage(video, x0 * vw, y0 * vh, (x1 - x0) * vw, (y1 - y0) * vh, 0, 0, 12, 16); } catch (e) { return null; }
+    const px = appG.getImageData(0, 0, 12, 16).data, h = new Float32Array(64);
+    for (let i = 0; i < px.length; i += 4) h[(px[i] >> 6) * 16 + (px[i + 1] >> 6) * 4 + (px[i + 2] >> 6)]++;
+    let sum = 0; for (let i = 0; i < 64; i++) sum += h[i]; for (let i = 0; i < 64; i++) h[i] /= sum;
+    return h;
+  }
+
+  /* body re-identification (OSNet): runs a few times a second in the background and only CORRECTS identities, never blocks tracking */
+  async function ensureReId() {
+    if (reid || reidFailed || typeof ReId === 'undefined' || cfg.reid === false || !yolo) return;
+    reidFailed = true;                                                   // only try once per engine start
+    try {
+      const r = await ReId.create({ model: yolo.provider === 'webgpu' ? 'ain' : 'x025', ortBase: 'vendor/ort/', modelBase: 'models/', providers: ['webgpu', 'wasm'] });
+      reid = r; reidFailed = false; det.reid = `OSNet ${r.model || ''} (${r.provider})`; report();
+    } catch (e) { det.reidErr = (e && e.message) || String(e); }
+  }
+  function bodyBox(d) {
+    if (d.box) return d.box;
+    const b = d.bbox, h = b.y1 - b.y0;                                   // MediaPipe gives only head-to-hips: stretch down to the feet
+    return { x0: Math.max(0, b.x0 - h * 0.15), x1: Math.min(1, b.x1 + h * 0.15), y0: Math.max(0, b.y0 - h * 0.1), y1: Math.min(1, b.y1 + h * 1.3) };
+  }
+  function reidTick(dets, t0) {
+    if (!yolo) return;
+    if (!reid) { ensureReId(); return; }
+    if (reidBusy || t0 - lastEmb < 350 || !video.videoWidth) return;
+    const cand = dets.filter(d => d.good && d.inside && (d.score || 1) >= 0.5);
+    if (!cand.length) return;
+    reidBusy = true; lastEmb = t0;
+    reid.embedMany(video, cand.map(bodyBox)).then(embs => {
+      det.reidMs = Math.round(reid.lastMs || 0);
+      tracker.applyEmbeddings(cand.map((d, i) => ({ x: d.x, y: d.y, s: d.s, emb: embs[i] })), performance.now());
+      for (const [a, b] of tracker.drainSwaps()) if (window.Buzz && Buzz.swapColors) Buzz.swapColors(a, b);
+      pushTracks();
+    }).catch(e => { det.reidErr = (e && e.message) || String(e); reid = null; reidFailed = true; }).finally(() => { reidBusy = false; });
+  }
+
+  function feed(dets, now) {
+    dets = cleanDets(dets);
+    for (const d of dets) d.app = appearance(d);
+    lastDets = dets; people.frame = dets.length; people.square = dets.filter(d => d.inside).length;
+    tracker.update(dets, now);
+    const ev = tracker.drain(); if (ev.length && window.Buzz) Buzz.raise(ev);
+    pushTracks();
+  }
+  function pushTracks() {
+    const colors = tracker.colors(), key = colors.join(',');
+    if (key !== lastLive) { lastLive = key; post({ type: 'tracks', colors }); }
+  }
+
+  function simStep(now) {
+    if (!sim || sim.length !== cfg.simN) sim = Array.from({ length: cfg.simN }, (_, i) => ({ ph: i * 1.7 + 0.5, sp: 0.07 + (i % 3) * 0.03, cu: (i + 0.5) / cfg.simN, cv: 0.3 + (i * 0.37 % 0.55) }));
+    const t = now / 1000, dets = [];
+    for (const p of sim) {
+      const u = Math.min(0.92, Math.max(0.08, p.cu + Math.sin(t * p.sp * 3 + p.ph) * 0.1));
+      const v = Math.min(0.95, Math.max(0.3, p.cv + Math.cos(t * p.sp * 2.3 + p.ph) * 0.16));
+      const f = quadPoint(cfg.quad, u, v), s = 0.035 + 0.06 * v;
+      const d = { x: f.x, y: f.y - (0.12 + 0.25 * v), s, score: 1, good: true, inside: true, insideExp: true };
+      d.bbox = { x0: d.x - s, y0: d.y - 0.02, x1: d.x + s, y1: d.y + 0.3 * (0.5 + v) };
+      dets.push(d);
+      if (cfg.simDup) {                      // test: the model sometimes reports the same person twice, or a ghost nearby
+        dets.push({ ...d, x: d.x + 0.012, y: d.y + 0.01, score: 0.6, bbox: { ...d.bbox } });
+        dets.push({ ...d, x: d.x + 0.03, y: d.y - 0.02, s: s * 0.8, score: 0.5, bbox: { ...d.bbox } });
+      }
+    }
+    feed(dets, now);
+  }
+
+  async function detectLoop() {
+    if (PREV) return;
+    if (document.body.classList.contains('replaying')) { setTimeout(detectLoop, 120); return; }
+    const interval = 1000 / (cfg.detHz || 12);
+    const now = performance.now();
+    infer = false;
+    try {
+      if (cfg.sim) { det.state = 'running'; simStep(now); }
+      else if (cfg.on && cfg.detect && phase === 'live' && !document.hidden) {
+        if (landmarker && !yolo && !yoloFailed && cfg.engine !== 'mediapipe' && typeof YoloPose !== 'undefined') dropLandmarker();   // YOLO is allowed again: switch back
+        if (!yolo && !landmarker) await ensureDetector();
+        else if (video.readyState >= 2 && video.videoWidth) {
+          const t0 = performance.now();
+          let dets = [];
+          if (yolo) {
+            let ppl; infer = true;
+            if (cfg.mode === 'crowd') { const a = await yolo.detect(video, { x: 0, y: 0, w: 0.6, h: 1 }), b = await yolo.detect(video, { x: 0.4, y: 0, w: 0.6, h: 1 }); ppl = a.concat(b); }
+            else ppl = await yolo.detect(video);
+            infer = false;
+            det.ms = det.ms ? det.ms * 0.8 + (performance.now() - t0) * 0.2 : performance.now() - t0;
+            for (const p of ppl) { const d = cocoToDet(p); if (d) dets.push(d); }
+            // no WebGPU and too slow? fall back to the lighter MediaPipe model automatically
+            if (cfg.engine === 'auto' && yolo.provider === 'wasm') { if (det.ms <= 250) slowN = 0; else if (++slowN >= 4) { try { yolo.dispose && yolo.dispose(); } catch (e) {} yolo = null; yoloFailed = true; yoloFailedAt = performance.now(); det.ms = 0; det.err = 'YOLO is too slow without WebGPU here, switched to MediaPipe.'; } }
+          } else {
+            infer = true;
+            const poses = cfg.mode === 'crowd' ? crowdPoses() : (landmarker.detectForVideo(video, t0).landmarks || []);
+            infer = false;
+            det.ms = det.ms ? det.ms * 0.8 + (performance.now() - t0) * 0.2 : performance.now() - t0;
+            for (const lm of poses) { const d = poseToDet(lm); if (d) dets.push(d); }
+          }
+          feed(dets, t0); detCount++;
+          reidTick(lastDets, t0);
+        }
+      } else if (det.state === 'running' || det.state === 'loading') {
+        det.state = 'off'; tracker.clear(); pushTracks(); people = { frame: 0, square: 0 };
+      }
+      errN = 0; if (det.state === 'error' && (yolo || landmarker)) det.state = 'running';
+    } catch (e) {
+      det.err = (e && e.message) || String(e);
+      // detector keeps failing (e.g. WebGPU device lost): drop it and rebuild, falling back from YOLO to MediaPipe
+      if (!infer) console.error('[cam] problem outside the detector', e);                 // not the detector's fault: do not swap engines for it
+      else if (++errN >= 3) {
+        errN = 0; det.state = 'loading';
+        if (yolo) { try { yolo.dispose && yolo.dispose(); } catch (e2) {} yolo = null; yoloFailed = true; yoloFailedAt = performance.now(); det.err = 'YOLO stopped working, switched to MediaPipe: ' + det.err; }
+        else dropLandmarker();
+      } else det.state = 'error';
+    }
+    const nt = performance.now();
+    if (nt - detT > 1000) { det.hz = detCount * 1000 / (nt - detT); detCount = 0; detT = nt; }
+    // adaptive: if inference is slow, back off so the laptop stays cool and the game stays smooth
+    const wait = Math.max(8, interval - (performance.now() - now)) + (det.ms > interval ? det.ms * 0.5 : 0);
+    setTimeout(detectLoop, wait);
+  }
+
+  /* ---------- drawing ---------- */
+  function mapPt(nx, ny) {
+    const vw = video.videoWidth || 1920, vh = video.videoHeight || 1080;
+    const k = Math.max(W / vw, H / vh), dw = vw * k, dh = vh * k, ox = (W - dw) / 2, oy = (H - dh) / 2;
+    let x = ox + nx * dw; const y = oy + ny * dh;
+    if (cfg.mirror) x = W - x;
+    return [x, y];
+  }
+  function frame(now) {
+    const dt = Math.min(0.1, (now - lastFrame) / 1000); lastFrame = now;
+    if (now - fpsT > 1000) { fps = fpsN * 1000 / (now - fpsT); fpsN = 0; fpsT = now; } fpsN++;
+    ctx.clearRect(0, 0, W, H);
+    if (showing()) {
+      if (cfg.showQuad) {
+        const pts = cfg.quad.map(([x, y]) => mapPt(x, y));
+        ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.closePath();
+        ctx.fillStyle = 'rgba(255,255,255,.07)'; ctx.fill();
+        ctx.setLineDash([22, 14]); ctx.lineDashOffset = -now / 60; ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.stroke(); ctx.setLineDash([]);
+      }
+      if (cfg.kites) {
+        if (!PREV) tracker.step(dt, now);
+        const t = now / 1000;
+        const items = (PREV ? remoteItems : tracker.tracks).slice().sort((a, b) => a.y - b.y);
+        for (const tr of items) {
+          if (!PREV) { const target = tr.order ? 1 : 0, cur = tr.morph || 0; tr.morph = cur + Math.sign(target - cur) * Math.min(Math.abs(target - cur), dt / 0.5); }
+          const [x, y] = mapPt(tr.x, tr.y), size = Math.max(74, Math.min(160, (tr.rs || tr.s) * W * 1.0));
+          // float above the head, but never off the top of the picture
+          Kites.draw(ctx, Math.min(W - size * 0.6, Math.max(size * 0.6, x)), Math.max(size * 0.75, y - size * 0.95), size, TEAMS[tr.color].color, t, TEAM_ORDER.indexOf(tr.color) * 1.3, tr.order || '', tr.morph || 0);
+        }
+        if (!PREV && previewSeen && now - lastKitePost > 70) {      // let the host-window preview mirror the kites
+          lastKitePost = now;
+          post({ type: 'kites', items: tracker.tracks.map(t => ({ x: t.x, y: t.y, s: t.s, color: t.color, order: t.order || 0, morph: t.morph || 0 })) });
+        }
+      }
+    }
+    if (cfg.debug && !PREV) {
+      ctx.font = '700 22px sans-serif'; ctx.textAlign = 'center';
+      for (const d of lastDets) {
+        const [x, y] = mapPt(d.x, d.y);
+        ctx.beginPath(); ctx.arc(x, y, 14, 0, 7); ctx.lineWidth = 4; ctx.strokeStyle = d.inside ? '#2FA562' : '#E5484D'; ctx.stroke();
+        ctx.fillStyle = '#2A2D3A'; ctx.fillText(d.inside ? 'head' : 'outside', x, y - 22);
+        if (d.dbg) {
+          const [lx, ly] = mapPt(d.dbg.x - 0.12, d.dbg.line), [rx] = mapPt(d.dbg.x + 0.12, d.dbg.line);
+          ctx.lineWidth = 3; ctx.strokeStyle = '#EC5CA8'; ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(rx, ly); ctx.stroke();
+          for (const w of d.dbg.wr) { const [wx, wy] = mapPt(w.x, w.y); ctx.beginPath(); ctx.arc(wx, wy, 11, 0, 7); ctx.fillStyle = w.up ? '#2FA562' : 'rgba(42,45,58,.5)'; ctx.fill(); }
+        }
+        if (d.bbox) { const [ax, ay] = mapPt(d.bbox.x0, d.bbox.y0), [bx, by] = mapPt(d.bbox.x1, d.bbox.y1); ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(42,45,58,.55)'; ctx.strokeRect(Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay)); }
+      }
+    }
+    if (!PREV && (snapOn || now < snapUntil) && phase === 'live' && now - snapT > 300) {
+      snapT = now; const c = snapCv.getContext('2d');
+      try { c.drawImage(video, 0, 0, 640, 360); post({ type: 'cam-frame', data: snapCv.toDataURL('image/jpeg', 0.55), mirror: cfg.mirror }); } catch (e) {}
+    }
+    requestAnimationFrame(frame);
+  }
+
+  /* ---------- config from host ---------- */
+  function apply(c) {
+    if (!c) return;
+    const old = cfg; cfg = Object.assign({}, cfg, c);
+    video.style.transform = pvimg.style.transform = cfg.mirror ? 'scaleX(-1)' : 'none';
+    if (PREV) { report(); return; }
+    if (old.on !== cfg.on || (old.deviceId !== cfg.deviceId && cfg.on)) { fallbackTried = false; start(); }
+    if (old.gpu !== cfg.gpu || old.mode !== cfg.mode || old.sens !== cfg.sens || old.engine !== cfg.engine) dropDetector();
+    if (!cfg.detect && (yolo || landmarker || reid)) dropDetector();
+    if (old.sim && !cfg.sim) { tracker.clear(); pushTracks(); }
+    if (!cfg.on && phase !== 'off') { phase = 'off'; err = ''; }
+    report();
+  }
+
+  CH.addEventListener('message', e => {
+    const m = e.data;
+    if (PREV) {
+      if (m.type === 'cam-frame') { remoteFrameAt = performance.now(); pvimg.src = m.data; document.body.classList.add('cam-live'); }
+      else if (m.type === 'kites') remoteItems = m.items;
+      return;
+    }
+    if (m.type === 'hello' && m.preview) previewSeen = true;
+    if (m.type === 'cam-snap') { snapOn = !!m.on && !m.preview; if (m.on) snapUntil = performance.now() + 8000; }
+    else if (m.type === 'cam-list') refreshDevices();
+  });
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener)
+    navigator.mediaDevices.addEventListener('devicechange', () => { refreshDevices(); if (cfg.on && phase !== 'live') start(); });
+  document.addEventListener('fullscreenchange', report);
+  setInterval(report, 1000);
+  requestAnimationFrame(frame); detectLoop();
+
+  // what the replay recorder should film right now (it runs on its own timer, not on the drawing loop)
+  const snapshot = () => ({ show: showing(), video: (phase === 'live' && !cfg.sim && video.readyState >= 2) ? video : null, tracks: tracker.tracks });
+  const debug = () => ({ engineName, yolo: !!yolo, provider: yolo && yolo.provider, landmarker: !!landmarker, yoloFailed, loading, detGen, errN, slowN, reid: !!reid, state: det.state, err: det.err });
+  return { apply, report, tracker, cfg: () => cfg, snapshot, debug };
+})();
+
+window.Cam = Cam;

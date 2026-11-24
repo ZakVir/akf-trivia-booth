@@ -1,0 +1,19 @@
+1. Which is a mammal?
+A) Shark
+B) Dolphin *
+C) Trout
+
+2. Capital of Italy?
+(A) Milan
+(B) Rome (correct)
+(C) Turin
+
+3. Largest desert?
+- ✓ Sahara
+- Gobi
+- [ ] Kalahari
+
+4. Pick the prime
+A. 4
+B. 7 ✓
+C. 9

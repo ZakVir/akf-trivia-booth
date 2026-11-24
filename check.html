@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AKF Trivia - Self-check</title>
+<link rel="stylesheet" href="base.css">
+<style>
+  body { padding: 22px; max-width: 900px; margin: 0 auto; font-size: 15px; }
+  h1 { font: 700 26px var(--f-head); margin: 0 0 6px; } p { color: var(--ink-2); margin: 4px 0 14px; }
+  button { font: 700 15px var(--f-body); background: var(--ice); border: 3px solid var(--ice-d); border-radius: 13px; padding: 10px 18px; cursor: pointer; margin: 0 8px 8px 0; }
+  .row { display: grid; grid-template-columns: 22px 230px 1fr; gap: 8px 12px; padding: 7px 0; border-bottom: 2px solid var(--line); }
+  .dot { width: 14px; height: 14px; border-radius: 50%; margin-top: 4px; background: #bbb; } .dot.ok { background: #2FA562; } .dot.warn { background: #F2B01E; } .dot.bad { background: #E5484D; }
+  .k { font-weight: 800; } .v { color: var(--ink-2); line-height: 1.35; word-break: break-word; }
+  #out { white-space: pre-wrap; background: var(--paper); border: 3px solid var(--line); border-radius: 14px; padding: 12px; margin-top: 14px; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
+  video { width: 260px; border-radius: 12px; background: #000; margin: 6px 0; }
+</style>
+</head>
+<body>
+<h1>Self-check</h1>
+<p>Open this in the same browser you will use at the booth. Press the buttons in order; send me the text box at the bottom.</p>
+<div style="margin-bottom:8px"><label><b>Camera to test:</b> <select id="camSel" style="font:700 14px var(--f-body);padding:6px 10px;border:3px solid var(--line);border-radius:12px"><option value="">Automatic (best real camera)</option></select></label></div>
+<div><button id="bBasic">1. Browser + files</button><button id="bCam">2. Camera speed</button><button id="bYolo">3. Detection model speed</button><button id="bRec">4. Replay recorder</button><button id="bAll">Run all</button><button id="bCopy">Copy report</button></div>
+<div id="rows"></div>
+<video id="v" muted playsinline autoplay></video>
+<div id="out"></div>
+<script src="vendor/ort/ort.min.js" onerror="window.__ortMissing=1"></script>
+<script src="yolo-pose.js"></script>
+<script src="check.js"></script>
+</body>
+</html>

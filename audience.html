@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AKF Trivia - TV</title>
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="audience.css">
+</head>
+<body>
+<div id="stage">
+  <div id="snow"></div>
+
+  <section id="cam" class="panel">
+    <div id="camCard">
+      <div class="title">AKF <span>Trivia</span></div>
+      <div class="sub">Step in front of the camera and join the game!</div>
+      <div class="dots"><b style="background:var(--red)"></b><b style="background:var(--gold)"></b><b style="background:var(--green)"></b><b style="background:var(--blue)"></b><b style="background:var(--purple)"></b></div>
+    </div>
+    <div id="simBack"></div>
+    <video id="video" muted playsinline autoplay></video>
+    <img id="pvimg" alt="">
+    <canvas id="kites" width="1148" height="646"></canvas>
+    <canvas id="replay" width="1148" height="646"></canvas>
+    <div id="buzzHint">🙋 Raise your hand to answer!</div>
+    <div id="buzzBanner"></div>
+  </section>
+
+  <section id="board" class="panel">
+    <div id="mascotCol"><div id="mascot"></div></div>
+    <div id="boardRight">
+      <div id="bubble">Ready? Step in!</div>
+      <div id="bars"></div>
+    </div>
+  </section>
+
+  <section id="qpanel" class="panel">
+    <div id="qtop"><span id="qnum"></span><span id="level"></span><div id="timer"><div id="timerFill"></div></div></div>
+    <div id="body" style="display:contents"></div>
+  </section>
+
+  <canvas id="confetti" width="1920" height="1080"></canvas>
+  <div id="wait">Waiting for the host window...</div>
+</div>
+
+<script src="questions.js"></script>
+<script src="shared.js"></script>
+<script src="tracker.js"></script>
+<script src="kites.js"></script>
+<script src="buzz.js"></script>
+<script src="mascot.js"></script>
+<script src="yolo-pose.js"></script>
+<script src="reid.js"></script>
+<script src="cam.js"></script>
+<script src="audience.js"></script>
+</body>
+</html>

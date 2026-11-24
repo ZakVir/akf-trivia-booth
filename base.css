@@ -1,0 +1,37 @@
+/* Shared tokens: light cream winter look */
+:root {
+  --cream: #FBF3E0;
+  --cream-2: #F5E9CF;
+  --paper: #FFFCF4;
+  --line: #E9DDBF;
+  --ink: #2A2D3A;
+  --ink-2: #5B5F70;
+  --ice: #CBE6F2;
+  --ice-d: #6FAFCB;
+  --night: #1E2433;
+  --gold-soft: #FFF0BF;
+
+  /* Team colors: match the wristbands exactly */
+  --red: #E5484D;
+  --blue: #3B82F6;
+  --green: #2FA562;
+  --gold: #F2B01E;
+  --orange: #F28C28;
+  --teal: #14B8A6;
+  --purple: #8B5CF6;
+  --pink: #EC5CA8;
+
+  --f-head: 'Fredoka', 'Arial Rounded MT Bold', ui-rounded, 'Avenir Next Rounded', system-ui, sans-serif;
+  --f-num: 'Lilita One', 'Fredoka', 'Arial Rounded MT Bold', ui-rounded, system-ui, sans-serif;
+  --f-body: 'Nunito', ui-rounded, 'Avenir Next', system-ui, sans-serif;
+}
+
+/* Offline fonts: drop Fredoka.woff2, LilitaOne.woff2 and Nunito.woff2 into ./fonts/.
+   If they are missing, the rounded system fonts above are used. */
+@font-face { font-family: 'Fredoka'; src: local('Fredoka'), local('Fredoka Regular'), url('fonts/Fredoka.woff2') format('woff2'); font-weight: 300 700; }
+@font-face { font-family: 'Lilita One'; src: local('Lilita One'), local('LilitaOne'), url('fonts/LilitaOne.woff2') format('woff2'); }
+@font-face { font-family: 'Nunito'; src: local('Nunito'), url('fonts/Nunito.woff2') format('woff2'); font-weight: 300 900; }
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--cream); color: var(--ink); font-family: var(--f-body); }
