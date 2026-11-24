@@ -441,11 +441,12 @@ const Cam = (() => {
         if (!PREV) tracker.step(dt, now);
         const t = now / 1000;
         const items = (PREV ? remoteItems : tracker.tracks).slice().sort((a, b) => a.y - b.y);
+        const covered = document.body.classList.contains('replaying');   // the full-screen replay hides this canvas: keep tracking, skip drawing
         for (const tr of items) {
           if (!PREV) { const target = tr.order ? 1 : 0, cur = tr.morph || 0; tr.morph = cur + Math.sign(target - cur) * Math.min(Math.abs(target - cur), dt / 0.5); }
           const [x, y] = mapPt(tr.x, tr.y), size = Math.max(74, Math.min(160, (tr.rs || tr.s) * W * 1.0));
           // float above the head, but never off the top of the picture
-          Kites.draw(ctx, Math.min(W - size * 0.6, Math.max(size * 0.6, x)), Math.max(size * 0.75, y - size * 0.95), size, TEAMS[tr.color].color, t, TEAM_ORDER.indexOf(tr.color) * 1.3, tr.order || '', tr.morph || 0);
+          if (!covered) Kites.draw(ctx, Math.min(W - size * 0.6, Math.max(size * 0.6, x)), Math.max(size * 0.75, y - size * 0.95), size, TEAMS[tr.color].color, t, TEAM_ORDER.indexOf(tr.color) * 1.3, tr.order || '', tr.morph || 0);
         }
         if (!PREV && previewSeen && now - lastKitePost > 70) {      // let the host-window preview mirror the kites
           lastKitePost = now;

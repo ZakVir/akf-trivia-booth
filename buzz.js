@@ -19,7 +19,8 @@ const Buzz = (() => {
 
   let enabled = true, ordering = true, armed = false, locked = false, lastQ = -1, lastRaisedAt = 0;
   let orderList = [], pend = [], pendTimer = null, lastClip = null, play = null;
-  let lastRecAt = 0, replayToken = 0, building = false, clipTimer = null;
+  let lastRecAt = 0, lastRvfcAt = 0, rvfcGen = 0, replayToken = 0, building = false, clipTimer = null, lastSrc = null;
+  const LEAD_MS = 900;                          // replay starts this long before the first hand began to rise
   const rcv = $('replay'), rg = rcv.getContext('2d');
 
   /* ---------------- state from the host ---------------- */
@@ -32,7 +33,7 @@ const Buzz = (() => {
   }
   function setHint(on) { $('buzzHint').style.display = on ? 'block' : 'none'; }
   function unlock() {
-    locked = false; pend = []; clearTimeout(pendTimer); pendTimer = null; replayToken++; stop();
+    locked = false; pend = []; clearTimeout(pendTimer); pendTimer = null; replayToken++; stop(); lastSrc = null;
     if (orderList.length) { orderList = []; post({ type: 'order', list: [] }); }
     try { Cam.tracker.tracks.forEach(t => { t.order = 0; }); } catch (e) {}
   }
@@ -49,7 +50,7 @@ const Buzz = (() => {
     const e = { t, blob: null, tracks: snapTracks(tracks), vw: video ? video.videoWidth : 0, vh: video ? video.videoHeight : 0 };
     rec.push(e);
     const cutoff = t - KEEP_MS; while (rec.length && rec[0].t < cutoff) rec.shift();
-    if (video && encPending < 4) {              // shed load rather than fall behind
+    if (video && encPending < 4 && !play && !building) {   // shed load rather than fall behind; pause encoding while a replay runs
       try {
         const eh = Math.max(2, Math.round(EW * (e.vh || 9) / (e.vw || 16))); if (enc.height !== eh) enc.height = eh;
         eg.drawImage(video, 0, 0, EW, eh); encPending++;
@@ -60,18 +61,26 @@ const Buzz = (() => {
   }
   function startRecorder() {
     const v = $('video');
-    if (v && v.requestVideoFrameCallback) {     // fires once per real camera frame
+    const hasRvfc = !!(v && v.requestVideoFrameCallback);
+    const chain = () => {                       // fires once per real camera frame; a generation number stops duplicate chains
+      const g = ++rvfcGen;
       const cb = () => {
+        if (g !== rvfcGen) return;
+        lastRvfcAt = performance.now();
         try { const sn = Cam.snapshot(); if (sn.video) record(performance.now(), sn.video, sn.tracks); } catch (e) {}
         v.requestVideoFrameCallback(cb);
       };
       v.requestVideoFrameCallback(cb);
-    }
-    setInterval(() => {                         // 60/s timer: practice mode (no picture), and a watchdog if frame callbacks ever stop
+    };
+    if (hasRvfc) chain();
+    setInterval(() => {                         // 60/s timer: practice mode (no picture), and a fallback if frame callbacks stop
       try {
-        const sn = Cam.snapshot();
-        if (sn.show && !sn.video) record(performance.now(), null, sn.tracks);
-        else if (sn.video && performance.now() - lastRecAt > 600) record(performance.now(), sn.video, sn.tracks);
+        const sn = Cam.snapshot(), now = performance.now();
+        if (sn.show && !sn.video) record(now, null, sn.tracks);
+        else if (sn.video && (!hasRvfc || now - lastRvfcAt > 600)) {
+          record(now, sn.video, sn.tracks);     // keep filming at timer speed meanwhile
+          if (hasRvfc && now - lastRvfcAt > 1500) { lastRvfcAt = now; chain(); }   // e.g. the camera restarted: hook the frame callback up again
+        }
       } catch (e) {}
     }, 16);
   }
@@ -86,18 +95,20 @@ const Buzz = (() => {
   function raise(events) {
     if (!ordering) return;
     const evs = events.slice().sort((a, b) => a.at - b.at);
-    let changed = false;
+    let changed = false, joined = false;
     for (const e of evs) {                      // everyone who raises a hand gets the next number
       if (orderList.some(o => o.color === e.color)) continue;
       orderList.push({ color: e.color, rank: orderList.length + 1, at: e.at });
       changed = true;
-      if (armed && !locked && !play && !pend.some(p => p.color === e.color)) pend.push(e);
+      if (armed && !locked && !play && !pend.some(p => p.color === e.color)) { pend.push(e); joined = true; }
     }
     if (changed) {
-      if (!locked) { orderList.sort((a, b) => a.at - b.at); orderList.forEach((o, i) => { o.rank = i + 1; }); }   // numbers follow when hands ROSE, not when they were confirmed
+      // numbers follow when hands ROSE, not when they were confirmed (once a winner is called, they keep number 1)
+      if (!locked) orderList.sort((a, b) => a.at - b.at); else orderList = orderList.slice(0, 1).concat(orderList.slice(1).sort((a, b) => a.at - b.at));
+      orderList.forEach((o, i) => { o.rank = i + 1; });
       syncOrders(); orderMsg();
     }
-    if (pend.length && !locked && armed) {
+    if (joined && !locked && armed) {             // a hand that was already queued going up again does not delay the call
       clearTimeout(pendTimer);
       // two or more hands: go as soon as things go quiet. One hand: wait until 1.5 s after it ROSE (it was confirmed HOLD_MS + detection lag later)
       const delay = pend.length >= 2 ? QUIET_MS : Math.max(80, CONTEST_MS + HOLD_MS + 150 - (performance.now() - pend[0].at));
@@ -114,7 +125,7 @@ const Buzz = (() => {
     const wrong = orderList[0] && orderList[0].color;
     const still = orderList.filter(o => o.color !== wrong && Cam.tracker.tracks.some(t => t.color === o.color && t.raised)).sort((a, b) => a.at - b.at);
     unlock();
-    for (const o of still) { orderList.push({ color: o.color, rank: orderList.length + 1, at: o.at }); pend.push({ color: o.color, at: o.at }); }
+    for (const o of still) { orderList.push({ color: o.color, rank: orderList.length + 1, at: o.at }); pend.push({ color: o.color, at: o.at, again: true }); }
     if (orderList.length) { syncOrders(); orderMsg(); }
     if (pend.length && armed) pendTimer = setTimeout(resolve, QUIET_MS); else if (armed) setHint(true);
   }
@@ -130,8 +141,9 @@ const Buzz = (() => {
     post(info); setHint(false);
     if (info.contested) {                       // replay only for a real close call
       const last = list[list.length - 1], now = performance.now();
-      let frames = framesBetween(first.at - 2000, Math.min(now, last.at + 900));
-      if (frames.length < 2) frames = framesBetween(now - 4000, now);
+      // only footage that really shows these hands rising: never stale or substitute pictures (e.g. after 'wrong answer' re-queues old hands)
+      const fresh = !list.every(l => l.again) && rec.length && rec[0].t <= first.at - 200;
+      const frames = fresh ? framesBetween(first.at - LEAD_MS - 50, Math.min(now, last.at + 900)) : [];
       if (frames.length >= 2) { startReplay(frames, list, info); return; }
     }
     banner(first.color, info.contested ? 'first (no replay pictures yet)' : 'first hand up!');
@@ -147,26 +159,50 @@ const Buzz = (() => {
   }
 
   /* ---------------- instant replay ---------------- */
-  function disposeClip(c) { if (c) for (const f of c.frames) if (f.bmp && f.bmp.close) { try { f.bmp.close(); } catch (e) {} } }
+  function disposeClip(c) { if (!c) return; c.disposed = true; for (const f of c.frames) if (f.bmp && f.bmp.close) { try { f.bmp.close(); } catch (e) {} f.bmp = null; } }
+  // Pictures are decoded IN ORDER, a few at a time, while the replay already plays (it starts once the first ones are ready).
+  // At slow motion the decoder stays well ahead of the playhead, so the replay starts almost immediately.
   async function buildClip(frames, list, info, first, passes, manual) {
     let src = frames.some(f => f.blob) ? frames.filter(f => f.blob) : frames;       // practice mode has no pictures
     while (src.length > MAX_REPLAY_FRAMES) src = src.filter((f, i) => i % 2 === 0);  // keep memory in check
-    const bmps = await Promise.all(src.map(f => f.blob ? createImageBitmap(f.blob).catch(() => null) : null));
     const withSize = src.find(f => f.vw);
-    return { frames: src.map((f, i) => ({ t: f.t, tracks: f.tracks, bmp: bmps[i] })), list, info, first, passes, manual: !!manual, vw: withSize ? withSize.vw : 16, vh: withSize ? withSize.vh : 9 };
+    const clip = { frames: src.map(f => ({ t: f.t, tracks: f.tracks, bmp: null, blob: f.blob })), list, info, first, passes, manual: !!manual, vw: withSize ? withSize.vw : 16, vh: withSize ? withSize.vh : 9 };
+    let next = 0, readyN = 0, wake = null;
+    const worker = async () => {
+      while (next < clip.frames.length && !clip.disposed) {
+        const f = clip.frames[next++];
+        if (f.blob) { try { const b = await createImageBitmap(f.blob); if (clip.disposed) b.close(); else f.bmp = b; } catch (e) {} }
+        readyN++; if (wake && readyN >= Math.min(8, clip.frames.length)) { wake(); wake = null; }
+      }
+    };
+    const head = new Promise(r => { wake = r; });
+    for (let i = 0; i < 3; i++) worker();
+    if (!clip.frames.length) wake();
+    await Promise.race([head, new Promise(r => setTimeout(r, 400))]);     // first frames ready (or 0.4 s at most)
+    return clip;
   }
   async function startReplay(frames, list, info) {
     const first = list[0].at, span = list[list.length - 1].at - first;
     const start = frames[0].t - first, end = frames[frames.length - 1].t - first;
     const passes = [
-      { from: Math.max(start, -1600), to: Math.min(span + 700, Math.max(end, 300)), speed: 0.5 },
+      { from: Math.max(start, -LEAD_MS), to: Math.min(span + 700, Math.max(end, 300)), speed: 0.5 },
       { from: Math.max(start, -400), to: Math.min(span + 400, Math.max(end, 300)), speed: span > 800 ? 0.3 : 0.25 }
     ];
     const my = ++replayToken; building = true;
+    if (!play) { disposeClip(lastClip); lastClip = null; }          // free the old pictures before decoding new ones
+    lastSrc = { frames, list, info, first, passes, manual: false };   // kept so 'Replay again' works any time later
     let clip; try { clip = await buildClip(frames, list, info, first, passes, false); } finally { building = false; }
     if (my !== replayToken) { disposeClip(clip); return; }          // the host moved on while pictures were being prepared
     disposeClip(lastClip); lastClip = clip;
     runClip();
+  }
+  async function replayAgain() {
+    if (lastClip && !lastClip.disposed) { runClip(); return; }
+    if (!lastSrc || building) return;                                 // the decoded pictures were freed: decode them again
+    const s = lastSrc, my = ++replayToken; building = true;
+    let clip; try { clip = await buildClip(s.frames, s.list, s.info, s.first, s.passes, s.manual); } finally { building = false; }
+    if (my !== replayToken) { disposeClip(clip); return; }
+    lastClip = clip; runClip();
   }
   async function replayLast() {                 // host pressed Replay: the last few seconds, no matter what
     if (building) return;
@@ -175,7 +211,10 @@ const Buzz = (() => {
     let frames = framesBetween(now - 4500, now);
     if (frames.length < 2) return;
     const my = ++replayToken; building = true;
-    let clip; try { clip = await buildClip(frames, orderList.map(o => ({ color: o.color, at: o.at })), { winner: orderList[0] ? orderList[0].color : null }, now, [{ from: frames[0].t - now, to: 0, speed: 0.55 }], true); } finally { building = false; }
+    if (!play) { disposeClip(lastClip); lastClip = null; }
+    const list = orderList.map(o => ({ color: o.color, at: o.at })), info = { winner: orderList[0] ? orderList[0].color : null }, passes = [{ from: frames[0].t - now, to: 0, speed: 0.55 }];
+    lastSrc = { frames, list, info, first: now, passes, manual: true };
+    let clip; try { clip = await buildClip(frames, list, info, now, passes, true); } finally { building = false; }
     if (my !== replayToken) { disposeClip(clip); return; }
     disposeClip(lastClip); lastClip = clip;
     runClip();
@@ -190,8 +229,10 @@ const Buzz = (() => {
     play.raf = requestAnimationFrame(tick);
   }
   function stop() {
+    const was = !!play;
     if (play) { post({ type: 'replay-stop' }); cancelAnimationFrame(play.raf); play = null; }
     document.body.classList.remove('replaying');
+    if (was) setHint(armed && !locked);                                 // bring the 'raise your hand' hint back after a manual replay
     rg.clearRect(0, 0, W, H);
     clearTimeout(clipTimer);                    // free the decoded pictures a few seconds after a replay (kept briefly for 'Replay again')
     clipTimer = setTimeout(() => { if (!play) { disposeClip(lastClip); lastClip = null; } }, 10000);
@@ -204,7 +245,7 @@ const Buzz = (() => {
   function tick(now) {
     if (!play) return;
     try {
-      if (now - play.t0 > 20000) { stop(); return; }                  // hard cap
+      if (!play.done && now - play.t0 > 30000) { stop(); return; }   // hard cap on the slow-motion passes only (the 7 s verdict always finishes)
       const { clip } = play, PS = clip.passes;
       let pass = PS[Math.min(play.pass, PS.length - 1)], vt, frozen = false;
       if (!play.done) {
@@ -241,12 +282,13 @@ const Buzz = (() => {
     let lo = 0, hi = F.length - 1;                                    // last recorded frame at or before tNow
     while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (F[mid].t <= tNow) lo = mid; else hi = mid - 1; }
     const A = F[lo], B = F[lo + 1], a = B ? Math.min(1, Math.max(0, (tNow - A.t) / ((B.t - A.t) || 1))) : 0;
+    let P = A; for (let i = lo; i >= 0 && !P.bmp; i--) if (F[i].bmp) P = F[i];          // picture still decoding: show the nearest earlier one
 
     rg.clearRect(0, 0, W, H);
     rg.save(); if (mir) { rg.translate(W, 0); rg.scale(-1, 1); }
-    if (A.bmp) {
-      rg.drawImage(A.bmp, m.ox, m.oy, m.dw, m.dh);
-      if (B && B.bmp && a > 0.03) { rg.globalAlpha = a; rg.drawImage(B.bmp, m.ox, m.oy, m.dw, m.dh); rg.globalAlpha = 1; }   // blend neighbouring frames: smooth slow motion
+    if (P.bmp) {
+      rg.drawImage(P.bmp, m.ox, m.oy, m.dw, m.dh);
+      if (P === A && B && B.bmp && a > 0.03) { rg.globalAlpha = a; rg.drawImage(B.bmp, m.ox, m.oy, m.dw, m.dh); rg.globalAlpha = 1; }   // blend neighbouring frames: smooth slow motion
     } else { rg.fillStyle = '#EEF6FA'; rg.fillRect(0, 0, W, H); }
     rg.restore();
     rg.fillStyle = 'rgba(20,30,70,.14)'; rg.fillRect(0, 0, W, H);
@@ -312,8 +354,8 @@ const Buzz = (() => {
   CH.addEventListener('message', e => {
     const m = e.data;
     if (m.type === 'buzz-reopen') { reopen(); $('buzzBanner').classList.remove('show'); }
-    else if (m.type === 'buzz-clear') { replayToken++; stop(); $('buzzBanner').classList.remove('show'); }
-    else if (m.type === 'replay-again') runClip();
+    else if (m.type === 'buzz-clear') { unlock(); $('buzzBanner').classList.remove('show'); setHint(armed); }   // point given / new group: fresh hands-up round
+    else if (m.type === 'replay-again') replayAgain();
     else if (m.type === 'replay-last') replayLast();
     else if (m.type === 'replay-skip') { replayToken++; stop(); }
     else if (m.type === 'sim-raise') {          // test button: pretend these players raised a hand, gaps in ms

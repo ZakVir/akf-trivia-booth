@@ -233,3 +233,19 @@ Also: make sure Search (the user's real browser) ends up on YOLO: Setup > Connec
 - Their earlier report: YOLO26n wasm (multi-thread) about 84 ms is about as fast as WebGPU in Search; YOLO26s webgpu 231 ms. Expect the app to choose wasm or webgpu by measurement.
 - Test clips from the user (TODO 24), real 30 questions, sound effects, host layout from paper drawing, AKF 3D logo markers (after polish; link to come; check AKF logo-use rules), detection-in-a-worker (not done).
 - Memory notes saved in `~/.claude/projects/<this project>/memory/` (akf-booth-project.md, akf-booth-rules.md).
+
+---------------------------------------------------------------------------------------------------
+## 11. BUG-FIX ROUND (2026-11-24, branch fix/smooth-marker-yolo-fallback, PR #1)
+
+Three code reviews (detection, buzzer/replay, host/server) + headless-browser end-to-end runs. Fixed:
+- Marker stutter: tracker soft dead-zone (no hold-then-jump). Test `tracker_jitter` now also measures stop-and-go on slow drift.
+- YOLO -> MediaPipe fallback: provider create timeout (20 s) + retry on ORT "Session already started"; slow-wasm rule 10 frames > 350 ms; 3-minute YOLO retry now actually runs; benchmark failures handled; every fallback writes `det.yoloNote`.
+- Sessions: `dispose()` in yolo-pose/reid waits for the running job; stale re-ID sessions/results after a settings change are dropped.
+- Camera: auto-picked camera unplugged -> picks another; saved camera found by name is used.
+- Hands: hidden wrists no longer hold a hand "up"; no back-dated raise times across tracking gaps; hold needs 2 frames.
+- Replay: progressive decode (plays after the first 8 frames), lead-in 0.9 s (was 1.6 s), only shown frames decoded, recorder pauses JPEG encoding and live kites stop drawing during a replay, "Replay again" works any time, verdict + banner never cut off, reopened old hands never replay stale footage, rVFC recorder re-hooks after a camera restart.
+- Host: "Point to", New group, step back to 0 and same-question goto all reset the live buzzer (`buzz-clear` now unlocks); +10 s after time ran out; digit keys on a focused dropdown score; Exit full screen during a replay; -1 at 0 no empty undo, -1 lowers streak.
+- Import: Restore built-in questions really restores questions.js; Ask AI uses what is on screen; same file can be re-picked; server key honoured; error numbering; storage-blocked safe.
+- server.py: AI proxy only accepts JSON requests addressed to localhost. start.command: reuses a running server, reports a busy port, waits for the server before opening the page.
+- check.js never hangs when the camera sends no frames. Fonts added in `fonts/` (OFL).
+Still to verify on the Mac with the real camera: YOLO provider/fallback note in Setup > Connectivity, marker smoothness, replay start delay with real pictures.

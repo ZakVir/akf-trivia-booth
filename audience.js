@@ -159,9 +159,9 @@ function renderBars() {
 function tick() {
   if (S) {
     const T = S.timer, left = T.running ? Math.max(0, T.endsAt - Date.now()) : T.left;
-    const fill = $('timerFill');
-    fill.style.width = Math.min(100, left / T.total * 100) + '%';
-    fill.classList.toggle('low', left < 6000 && left > 0 || (T.running && left === 0));
+    const fill = $('timerFill'), w = Math.min(100, left / (T.total || 1) * 100).toFixed(2) + '%', low = left < 6000 && left > 0 || (T.running && left === 0);
+    if (w !== tick.w) { fill.style.width = w; tick.w = w; }                 // only touch the page when something changed
+    if (low !== tick.low) { fill.classList.toggle('low', low); tick.low = low; }
   }
   requestAnimationFrame(tick);
 }

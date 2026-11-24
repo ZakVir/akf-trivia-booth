@@ -48,6 +48,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         if not self.path.startswith("/api/parse"):
             return self._json(404, {"error": "not found"})
+        # only this app may use the AI proxy: a JSON request (other websites can't send one without the browser asking first)
+        # addressed to this computer (blocks DNS-rebinding tricks), so nobody else can spend the NVIDIA key's quota
+        host = (self.headers.get("Host") or "").split(":")[0].lower()
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if host not in ("localhost", "127.0.0.1", "[::1]") or ctype != "application/json":
+            return self._json(403, {"error": "forbidden"})
         try:
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or b"{}")
         except Exception:
