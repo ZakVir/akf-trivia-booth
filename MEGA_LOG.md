@@ -307,3 +307,50 @@ Hosting: vercel.json sends COOP/COEP/CORP (multi-threaded wasm) and redirects / 
   question as a repeat only when stem + choices + answer match; automatic AI needs /api/health to answer (static mirror = built-in).
 - The NVIDIA key was pasted in chat: rotate it on build.nvidia.com and update the Vercel env var.
 
+
+## 15. HANDOFF TO A LOCAL SESSION ON THE MAC (2026-11-25, evening): OPEN PROBLEMS, READ THIS FIRST
+
+The owner is moving development to a local Claude Code session on the booth Mac (Arc browser, Chromium-based) because the cloud
+sandbox cannot reproduce Mac GPU/camera behaviour. Run the app locally: `start.command` -> http://localhost:8787/host.html.
+
+**What the owner sees on the Mac (live site, after PR #18):**
+- The host page is "glitchy": buttons (Next, Setup, exit full screen) often do not respond; the page looks frozen.
+- The Detection pill shows "Detection: error"; the camera picture does show now.
+- The live view looked stuck half-way into full-screen: black bars, the TV stage cut off on the right, the questions list still visible.
+- Before PR #18: the camera picture did not paint at all (kite visible, grey box).
+
+**What was found in the cloud (Chromium headless, crowd video as fake camera, no WebGPU):**
+- Cause #1 (fixed in PR #18): YOLO + re-ID ran on the CPU (wasm) on the MAIN thread, ~85% of the time. The live view is an
+  iframe in host.html (SOLO mode, host.js line 4) and shares the main thread, so the whole host froze. Fix: without a WebGPU
+  adapter, onnxruntime runs wasm in its proxy worker (`yolo-pose.js` wantProxy, `root.__ortProxy`; `reid.js` follows). Result
+  here: 8-14 fps -> 54-60 fps. A saved CPU winner (`localStorage akf-yolo-provider-n = wasm`) also means the worker.
+- NOT verified on the Mac: whether Arc gets a WebGPU adapter (then no worker; YOLO on WebGPU), whether the proxy worker starts
+  in Arc, and what "Detection: error" says. Get `det.err` / `det.provErr` first (Setup > Connectivity, or in the iframe
+  console: `Cam.debug()`, and the `cam-status` messages on BroadcastChannel).
+
+**Suspects still open (check each on the Mac with Chrome DevTools > Performance, both frames):**
+1. The fallback chain: YOLO error -> `yoloFailed` -> MediaPipe Lite with `delegate: cfg.gpu ? 'GPU' : 'CPU'` (default CPU) runs
+   `detectForVideo` synchronously on the main thread: a second freeze source. Consider never running a CPU detector on the main
+   thread (MediaPipe in a worker, or GPU delegate only).
+2. The 3D mascot (`mascot3d.mjs`, three.js, own rAF loop, antialias) + logo sprite baking (`logo-sprites.mjs`, readPixels) +
+   WebGPU inference + camera decode all share the GPU; "GPU stall due to ReadPixels" warnings appear even headless.
+3. Full-screen state in host.js (`fsManual`/`fsReplay`, `fitPreview`) can be left half-applied if the page stalls mid-change.
+4. `localStorage` remembers old choices (`akf-yolo-provider-*`, camera settings): test once with storage cleared.
+
+**Idea that was started but not committed (do it properly locally):** a watchdog in cam.js: a `PerformanceObserver('longtask')`
+measures how busy the page is each second; above ~35% busy, detection waits longer between frames (up to 2.5 s) and recovers
+when calm, so the host controls can never freeze. Plus: clicking the Detection pill shows engine, error, GPU note, speed test,
+page-busy %, and the browser string.
+
+**Bigger options if the shared main thread stays a problem:**
+- Run detection completely in a dedicated Worker (send frames with `createImageBitmap(video)` / `VideoFrame`, transfer them;
+  run onnxruntime there; the main thread only draws).
+- Turn SOLO off (`host.js` `const SOLO = true`): the TV runs in its own window (audience.html), and the host gets small preview
+  stills over BroadcastChannel. Check that Chrome/Arc puts the window in a separate process (open it with `noopener`).
+- A native app wrapper is NOT needed to fix this; the problem is main-thread work, which a desktop shell would share too.
+
+**Other state:**
+- Live: https://akf-trivia-booth.vercel.app (Vercel, auto-deploys main). Booth import code for hosted AI import is the Vercel
+  env var BOOTH_IMPORT_CODE (the owner has it). The NVIDIA key was pasted in chat once: the owner should rotate it.
+- Local AI import reads the key from a private `.env` (`NVIDIA_API_KEY=...`) next to server.py; question sets live in `questions.db`.
+- Tests: `node tests/run_all.js`. Clip harness: `tests/eval` (section 12). Real-camera checks happen on this Mac.
