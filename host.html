@@ -40,6 +40,7 @@
   .card { background: var(--card); border-radius: 18px; box-shadow: var(--shadow); padding: 16px 18px; }
   .top { position: sticky; top: 0; z-index: 4; background: var(--bg); padding-bottom: 4px; display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 14px; align-items: start; }
   body.solo .top { grid-template-columns: minmax(340px, 46%) minmax(0, 1fr); }
+  .top:has(> #previewBox.fs) { z-index: 60; }   /* full-screen preview must cover the sticky header too */
   #previewBox { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden; background: #E8E8ED; box-shadow: var(--shadow); }
   #previewBox iframe { pointer-events: none; position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; border: 0; transform-origin: 0 0; }
 
