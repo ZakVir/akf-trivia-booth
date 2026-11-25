@@ -32,5 +32,17 @@ ok(d.decide(S({ step: 1 }), now + 20100).state === 'grand_winner', 'third point 
 d.event('wrong', now + 30000);
 ok(d.decide(S({ step: 1 }), now + 30100).state === 'wrong_answer', 'nobody got it / wrong: wrong answer');
 
+// review fixes: a reaction ends when the question changes; every reaction gets a new serial (animation restarts)
+d = new D(); now = 4e6; d.decide(S(), now);
+d.event('winner', now + 100, { q: 0 });
+ok(d.decide(S({ qId: 1 }), now + 600).state === 'hosts_speaking', 'next question right after a crown: hosts speaking, not the old crown');
+d.event('correct', now + 1000, { q: 1 }); const s1 = d.decide(S({ qId: 1, step: 1 }), now + 1100).serial;
+d.event('correct', now + 2500, { q: 1 }); const s2 = d.decide(S({ qId: 1, step: 1 }), now + 2600).serial;
+ok(s2 > s1, 'a second point restarts the celebration');
+
+d = new D(); now = 5e6; d.decide(S({ step: 1 }), now);
+d.event('winner', now + 100, { q: 0 }); d.event('correct', now + 2100, { q: 0 });
+ok(d.decide(S({ step: 1 }), now + 2200).state === 'correct_answer', 'a 4th point during the crown still gets its spin');
+
 if (fails) { console.log(`FAIL: ${fails} mascot director check(s)`); process.exit(1); }
 console.log('mascot director: all checks passed'); process.exit(0);

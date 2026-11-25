@@ -19,25 +19,27 @@
   var STATE = { hand: 'hand_raised_alert', correct: 'correct_answer', winner: 'grand_winner', wrong: 'wrong_answer' };
   var READING_MS = 5000;
 
-  function MascotDirector() { this.q = null; this.qAt = -1e12; this.ev = null; this.until = 0; this.look = [0, 0]; this.timerWasOn = false; }
+  function MascotDirector() { this.q = null; this.qAt = -1e12; this.ev = null; this.evQ = null; this.until = 0; this.look = [0, 0]; this.timerWasOn = false; this.serial = 0; }
 
   MascotDirector.prototype.event = function (kind, now, opt) {
     if (!STATE[kind]) return;
     // a stronger moment is not cut short by a weaker one (a hand going up during the point celebration)
-    var rank = { hand: 1, wrong: 2, correct: 2, winner: 3 };
+    var rank = { hand: 1, wrong: 2, correct: 2, winner: 2 };                // a new point/verdict always shows; only a hand waits
     if (this.ev && now < this.until && rank[kind] < rank[this.ev]) return;
-    this.ev = kind; this.until = now + HOLD[kind];
+    this.ev = kind; this.until = now + HOLD[kind]; this.serial++;            // serial: every reaction restarts its animation
+    this.evQ = (opt && 'q' in opt) ? opt.q : this.q;                          // a reaction belongs to the question it happened on
     this.look = (opt && opt.look) ? opt.look : [0, 0];
   };
 
   MascotDirector.prototype.decide = function (S, now) {
     if (!S) return { state: 'idle_happy', timer: null, look: [0, 0] };
     if (S.qId !== this.q) { this.q = S.qId; this.qAt = now; }
+    if (this.ev && this.evQ !== S.qId) this.ev = null;                        // the host moved on: the old question's celebration ends
     var T = S.timer || {}, left = T.running ? Math.max(0, (T.endsAt || 0) - Date.now()) : (T.left || 0);
     var timerOn = !!T.running && left > 0;
-    if (this.timerWasOn && !timerOn && T.running && left <= 0) this.event('wrong', now);      // time's up
+    if (this.timerWasOn && !timerOn && T.running && left <= 0) this.event('wrong', now, { q: S.qId });      // time's up
     this.timerWasOn = timerOn;
-    if (this.ev && now < this.until) return { state: STATE[this.ev], timer: null, look: this.look };
+    if (this.ev && now < this.until) return { state: STATE[this.ev], timer: null, look: this.look, serial: this.serial };
     this.ev = null;
     if (timerOn) return { state: 'timer_pocket_watch', timer: [left / 1000, (T.total || 1000) / 1000], look: [0, 0] };
     if (S.step === 0) return { state: now - this.qAt < READING_MS ? 'hosts_speaking' : 'thinking_ponder', timer: null, look: [0, 0] };
