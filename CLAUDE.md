@@ -43,7 +43,7 @@ Commit, push, review and merge on your own. Never wait for approval to push or m
 ## Hosting
 - **Live (main link): https://akf-trivia-booth.vercel.app** - Vercel project `akf-trivia-booth` (team zakvirs-projects), linked to
   this GitHub repo: every merge to `main` deploys to production. `vercel.json` sends COOP/COEP/CORP and redirects / to host.html;
-  `api/parse.js` (AI importer -> NVIDIA) and `api/health.js` are Vercel functions. NVIDIA_API_KEY is a *sensitive* Vercel env var
+  `api/parse.js` (AI importer -> NVIDIA) and `api/health.js` are Vercel functions. NVIDIA_API_KEY and BOOTH_IMPORT_CODE (the code hosts type in Setup to use the booth's key) are *sensitive* Vercel env vars
   (production + preview), never in the repo. Previews need a Vercel login; production is public.
 - Local (the booth, offline): double-click `start.command` -> http://localhost:8787 (server.py: COOP/COEP, /api/parse with the key
   from a private `.env`, and the question-set database `questions.db`).

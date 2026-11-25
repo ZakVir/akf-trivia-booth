@@ -298,6 +298,12 @@ Hosting: vercel.json sends COOP/COEP/CORP (multi-threaded wasm) and redirects / 
   NVIDIA_API_KEY = sensitive env var. Vercel Authentication only on previews. Live test: AI import 7/7 in 6 s, isolated page, 0 errors.
   api/parse.js guards: same-origin (Origin/Sec-Fetch-Site), JSON only, model allowlist, 200 KB / 4096-token caps.
 - server.py: questions.db (SQLite) set library under /api/sets (localhost + JSON only), .env key loading. The import-panel UI for saved
-  sets is in progress (stash/branch feat/ai-import-and-library -> next PR). On Vercel the sets stay in the browser (db:false).
+  sets shipped in PR #16 (Setup > Questions import > Saved question sets). On Vercel the sets stay in the browser (db:false).
+- Booth import code (PR #15, after Devin flagged quota drain): Origin headers can be faked, so the hosted /api/parse only spends the
+  booth's key when the request has `X-Booth-Code` = BOOTH_IMPORT_CODE (sensitive Vercel env var, prod + preview; typed once in
+  Setup > AI helper settings, stored in localStorage `akf-import-code`). A host's own `nvapi-` key in the body is used without the code.
+  30 requests / 10 min per address (in-memory, per instance). /api/health reports needsCode. The local server ignores the code.
+- Import fallbacks (PR #16 review): a chosen file keeps its own parse when the AI fails or for "Read without AI"; AI results drop a
+  question as a repeat only when stem + choices + answer match; automatic AI needs /api/health to answer (static mirror = built-in).
 - The NVIDIA key was pasted in chat: rotate it on build.nvidia.com and update the Vercel env var.
 
