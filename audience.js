@@ -87,6 +87,7 @@ function render() {
   document.body.classList.toggle('timer-on', !!(S.timer && (S.timer.running || S.timer.left < S.timer.total)));
   renderQuestion();
   renderCards();
+  noteFact();
 }
 
 function renderQuestion() {
@@ -161,6 +162,21 @@ function renderCards() {
     prevScores[t] = v;
   }
 }
+
+/* ---- 'Did you know?' beside the podium: only facts from questions already answered (never a spoiler) ---- */
+const seenFacts = []; let factIdx = 0;
+function noteFact() {
+  const q = S && QUESTIONS[S.qId];
+  if (!q || S.step < 2) return;
+  const f = S.kid ? (q.kidFact || q.fact) : (q.fact || q.kidFact);
+  if (f && !seenFacts.includes(f)) { seenFacts.push(f); factIdx = seenFacts.length - 1; showFact(); }
+}
+function showFact() {
+  const box = $('didyou'); if (!seenFacts.length) { box.classList.remove('on'); return; }
+  box.classList.remove('on');
+  setTimeout(() => { $('didyouTxt').textContent = seenFacts[factIdx % seenFacts.length]; box.classList.add('on'); }, 350);
+}
+setInterval(() => { if (seenFacts.length > 1) { factIdx++; showFact(); } }, 9000);
 
 /* ---- timer bar ---- */
 function tick() {
