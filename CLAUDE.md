@@ -21,6 +21,10 @@ Commit, push, review and merge on your own. Never wait for approval to push or m
    - `node tests/run_all.js` must pass; if detection/tracking changed, also run the clip harness (`tests/eval`, see MEGA_LOG section 12)
      and compare against `main`; if UI changed, load the page headless (Playwright) and check for console errors + a screenshot;
    - fix anything found as new commits on the same branch, then re-check.
+   - **wait for the "Devin Review" check** (an automated reviewer on this repo; it posts within a few minutes). Read its
+     comments (`gh api repos/ZakVir/akf-trivia-booth/pulls/<n>/comments`), verify each against the code, fix the real ones
+     as new commits, reply briefly on threads you decided not to act on. Don't wait more than ~15 minutes: if it has not
+     finished, merge and schedule a check-in to handle its comments in a follow-up PR.
 6. **Merge it yourself** with a **merge commit** (not squash, not rebase), so `main` keeps every small commit *and* one merge
    commit per task: `git log --first-parent main` reads as one line per feature, `git log main` shows every step.
    - If the PR is a draft: `gh api -X POST repos/ZakVir/akf-trivia-booth/pulls/<n>/ccr/ready_for_review`
