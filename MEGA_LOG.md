@@ -272,3 +272,19 @@ up and forearm upright; from behind, a box reaching well above the head; held ha
 Known limits: a raise must be held 0.25 s (quick high-fives can be missed); people cut by the picture edge or right up
 against the lens can flicker; the model sometimes cannot see wrists of people at the very edge.
 Hosting: vercel.json sends COOP/COEP/CORP (multi-threaded wasm) and redirects / to host.html.
+
+---------------------------------------------------------------------------------------------------
+## 13. TV SCREEN ROUND (2026-11-25): full live feed, podium leaderboard, 3D mascot
+
+- Live feed fills the whole Live Feed panel (kites canvas 1148x617 = panel shape; cam.js reads W/H from it). Markers keep
+  clear of the top-left corner under the mascot tab and label (KEEP_OUT in cam.js).
+- Podium = live top-3 leaderboard (`leaderboard.js`, tests/leaderboard.test.js): middle 1st, left 2nd, right 3rd; team
+  colour bars + spinning kites; a place change -> kite flies up, drops back with a bounce in the new colour. Design look
+  (stars) until someone scores. Canvas has an aria-label with the standings.
+- 3D mascot (`mascot3d.mjs`, models/mascot/*.glb, vendor/three r170 via an import map): 8 states from the model maker's
+  guide. `mascot-director.js` (tests/mascot_director.test.js) picks the state: new question 5 s hosts_speaking ->
+  thinking_ponder; timer -> pocket watch; hand raised -> alert looking at the player (buzz.js calls window.mascotHand);
+  point -> correct_answer, 3rd in a row -> grand_winner; nobody / 'Wrong -> reopen' (message has wrong:true) / time up ->
+  wrong_answer; answer shown -> idle_happy. No WebGL or models -> the flat SVG face stays.
+- Devin Review only runs when a PR is opened, not on later pushes: follow-up commits get self-review only.
+
