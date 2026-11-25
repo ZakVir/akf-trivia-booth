@@ -7,7 +7,8 @@
   const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };     // storage can be blocked (private window)
   const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
   $('nimKey').value = lsGet('akf-nim-key') || '';
-  $('nimModel').value = lsGet('akf-nim-model') || 'meta/llama-3.1-8b-instruct';
+  const savedModel = lsGet('akf-nim-model');
+  $('nimModel').value = (!savedModel || /llama-3\.1-8b/.test(savedModel)) ? Importer.DEFAULT_MODEL : savedModel;   // the old default was retired by NVIDIA
   $('nimKey').onchange = e => lsSet('akf-nim-key', e.target.value.trim());
   $('nimModel').onchange = e => lsSet('akf-nim-model', e.target.value.trim());
   let readText = '';                                                      // the paste-box text that was last read

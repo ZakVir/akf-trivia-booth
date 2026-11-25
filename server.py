@@ -3,7 +3,9 @@
 
 - Serves this folder on http://localhost:8787 (needed so two windows can talk and the camera is allowed).
 - Optional: forwards the "Ask AI" question parser to NVIDIA's free NIM API. Browsers can't call
-  that API directly, so it goes through here. Your key is used for that one request and never saved or logged.
+  that API directly, so it goes through here. The key comes from the request (Setup > AI helper settings),
+  or from NVIDIA_API_KEY in the environment or in a private .env file next to this script (never committed).
+  It is never logged or sent anywhere except NVIDIA.
 Everything else works with no internet at all.
 """
 import http.server, json, os, socketserver, urllib.request, urllib.error
@@ -11,6 +13,23 @@ import http.server, json, os, socketserver, urllib.request, urllib.error
 PORT = int(os.environ.get("PORT", "8787"))
 NIM_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 ROOT = os.path.dirname(os.path.abspath(__file__))
+
+
+def load_env_file():
+    """NVIDIA_API_KEY=... (and other KEY=VALUE lines) from ROOT/.env, without overriding the real environment."""
+    try:
+        with open(os.path.join(ROOT, ".env"), encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+    except FileNotFoundError:
+        pass
+
+
+load_env_file()
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -61,7 +80,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         key = body.get("key") or os.environ.get("NVIDIA_API_KEY", "")
         if not key:
             return self._json(401, {"error": "no key"})
-        payload = {k: body[k] for k in ("model", "messages", "temperature", "max_tokens") if k in body}
+        payload = {k: body[k] for k in ("model", "messages", "temperature", "max_tokens", "chat_template_kwargs") if k in body}
         req = urllib.request.Request(NIM_URL, data=json.dumps(payload).encode(), method="POST",
                                      headers={"Content-Type": "application/json", "Accept": "application/json",
                                               "Authorization": "Bearer " + key})
