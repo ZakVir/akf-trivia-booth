@@ -21,6 +21,7 @@
   async function readFile(f) {
     if (!ready()) return;
     status('Reading ' + f.name + '…');
+    readText = $('paste').value.trim();                                     // text already in the paste box is older than this file: only new edits override it
     try { await handleResult(await Importer.parseFile(f), f.name); } catch (e) { status('Could not read that file: ' + e.message); }
   }
   $('file').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) readFile(f); };   // cleared so the same file can be picked again after editing it
