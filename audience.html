@@ -46,16 +46,7 @@
 
   <!-- Right bottom: scores -->
   <section id="scoreP" class="panel"></section>
-  <div id="podTab" aria-hidden="true">
-    <svg viewBox="0 0 229 224" width="229" height="224">
-      <path d="M47 105 L90 104 Q92 105 92 108 L92 182 Q92 184 89 184 L48 184 Q45 184 45 181 L45 108 Q45 105 47 105Z" fill="#02A5A7"/>
-      <path d="M95 71 L140 70 Q142 71 142 74 L142 184 Q142 186 139 186 L95 186 Q93 186 93 183 L93 73 Q93 71 95 71Z" fill="#FB5D46"/>
-      <path d="M145 128 L183 127 Q185 128 185 131 L185 185 Q185 187 182 187 L145 187 Q143 187 143 184 L143 130 Q143 128 145 128Z" fill="#FCB502"/>
-      <path d="M68 84 L71.5 92.5 L80.5 93 L73.5 99 L76 107.5 L68 102.5 L60 107.5 L62.5 99 L55.5 93 L64.5 92.5Z" fill="#02A3AA"/>
-      <path d="M117 41 L121.5 51.5 L132.5 52 L124 59.5 L127 70 L117 64 L107 70 L110 59.5 L101.5 52 L112.5 51.5Z" fill="#FAB603"/>
-      <path d="M163.5 106 L166.2 112.4 L173 112.8 L167.8 117.3 L169.5 124 L163.5 120.3 L157.5 124 L159.2 117.3 L154 112.8 L160.8 112.4Z" fill="#FAB603"/>
-    </svg>
-  </div>
+  <div id="podTab" aria-hidden="true"><canvas id="podium" width="458" height="448"></canvas></div>   <!-- live top-3 podium: leaderboard.js -->
   <div id="cards"></div>
 
   <canvas id="confetti" width="1920" height="1080"></canvas>
@@ -66,6 +57,7 @@
 <script src="shared.js"></script>
 <script src="tracker.js"></script>
 <script src="kites.js"></script>
+<script src="leaderboard.js"></script>
 <script src="buzz.js"></script>
 <script src="pose-logic.js"></script>
 <script src="yolo-pose.js"></script>

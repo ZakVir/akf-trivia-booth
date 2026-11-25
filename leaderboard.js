@@ -74,7 +74,7 @@
       rrect(ctx, b[0], b[1], b[2], BOTTOM - b[1], 4); ctx.fillStyle = hexMix(cFrom, cTo, s.mix); ctx.fill();
       var cx = b[0] + b[2] / 2, rest = b[1] - 20, y = rest + s.kiteY * (rest + 40);   // kiteY -1 = just above the top edge
       if (s.star) star(ctx, cx, b[1] - 12 + Math.min(0, y - rest), i === 0 ? 12 : 9, i === 1 ? '#02A3AA' : '#FAB603');
-      else if (Kites) Kites.draw(ctx, cx, y, i === 0 ? 34 : 28, TEAMS[s.team].color, t, i * 1.7, '', 0);
+      else if (Kites) Kites.draw(ctx, cx, y - 4, i === 0 ? 42 : 34, TEAMS[s.team].color, t, i * 1.7, '', 0);
     }
   }
 

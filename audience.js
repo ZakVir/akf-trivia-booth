@@ -108,7 +108,16 @@ const CARD = {
 };
 const CARD_ORDER = ['gold', 'green', 'red', 'blue', 'orange', 'teal', 'purple', 'pink'];
 const cardStyle = t => CARD[t] || { bg: '#F0F0F0', ring: (TEAMS[t] || {}).color || '#999' };
+/* the podium: live top-3 leaderboard (team colours, spinning kites; a place change makes the kite fly up and drop back) */
+const podium = new Leaderboard.Podium(), podCtx = $('podium').getContext('2d');
+(function podLoop(now) {
+  podCtx.setTransform(2, 0, 0, 2, 0, 0);                                  // drawn at 2x for a crisp TV picture
+  Leaderboard.draw(podCtx, podium, now, TEAMS, typeof Kites !== 'undefined' ? Kites : null);
+  requestAnimationFrame(podLoop);
+})(performance.now());
+
 function renderCards() {
+  podium.set(Leaderboard.top3(S.scores, TEAM_ORDER, TEAM_ORDER), performance.now());
   const board = S.board || [];
   const teams = (board.length ? CARD_ORDER.filter(t => board.includes(t)) : ['gold', 'green', 'red', 'blue']);   // nobody in view yet: the four teams, as in the design
   const key = teams.join(','), wrap = $('cards');
