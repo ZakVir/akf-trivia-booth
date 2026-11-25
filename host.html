@@ -141,6 +141,11 @@
   #drop { border: 1.5px dashed rgba(0, 113, 227, .45); border-radius: 16px; padding: 20px; text-align: center; color: var(--text2); background: rgba(0, 113, 227, .04); }
   #drop.over { background: var(--blue-t); }
   textarea#paste { width: 100%; min-height: 110px; }
+  .libbox { background: var(--bg); border-radius: 14px; padding: 12px 14px; margin-bottom: 14px; }
+  .liblist { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; max-height: 210px; overflow: auto; }
+  .lib { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 10px; align-items: center; padding: 7px 10px; border-radius: 10px; background: var(--card); }
+  .lib .n { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .lib .c { color: var(--text3); font-size: 12.5px; }
+  .lib button { padding: 5px 12px; font-size: 13px; } .lib button.use { background: var(--blue); color: #fff; } .lib button.del { color: var(--red); background: transparent; }
 </style>
 </head>
 <body>
@@ -271,12 +276,17 @@
     </div>
 
     <div data-pane="import" hidden>
+      <div class="libbox">
+        <div class="row"><h3 style="flex:1;margin:0">Saved question sets</h3><span class="hint" id="libWhere"></span>
+          <input type="text" id="libName" placeholder="Name for the current questions" style="width:240px"><button id="libSaveCur">Save current questions</button></div>
+        <div id="libList" class="liblist"></div>
+      </div>
       <div id="drop">Drop a file here (.csv .tsv .xlsx .docx .txt .md .json) or <input type="file" id="file" accept=".csv,.tsv,.xlsx,.docx,.txt,.md,.json,.pdf,.pages,.numbers"></div>
-      <div class="hint">…or paste your questions as text, in any layout a person could follow:</div>
+      <div class="hint">…or paste your questions as text, in any layout or format: <span id="aiState"></span></div>
       <textarea id="paste" placeholder="1. Which city is AKF based in?&#10;A) Paris  B) Geneva*  C) Cairo&#10;Fact: It was founded in 1967."></textarea>
       <div class="row" style="margin:8px 0">
         <button id="impRead" class="main">Read questions</button>
-        <button id="impAI">Ask AI to clean up</button>
+        <button id="impAI">Read without AI</button>
         <button id="impTemplate">Download CSV template</button>
         <button id="impSample">Use example text</button>
         <button id="impResetQ">Restore sample questions</button>
@@ -285,7 +295,7 @@
         <div class="field"><label>NVIDIA API key</label><input type="password" id="nimKey" placeholder="nvapi-..." style="width:260px"></div>
         <div class="field"><label>Model</label><input type="text" id="nimModel" style="width:260px"></div>
         <div class="field"><label>Booth import code</label><input type="password" id="nimCode" placeholder="only on the web version" style="width:260px"></div>
-        <div class="hint">Only used when you press “Ask AI”. The text you import is sent to NVIDIA's free API through the local server. Leave empty to stay fully offline.</div>
+        <div class="hint">When a key is set (here, in the booth's .env on the Mac, or in Vercel, plus the booth import code on the web), every import is read by the AI; the built-in reader is used if the AI is unavailable. The text you import is sent to NVIDIA's API through the booth's server. Leave empty to stay fully offline.</div>
       </details>
       <div id="impStatus" class="hint"></div>
       <div id="impReview"></div>
@@ -297,6 +307,7 @@
 <script src="questions.js"></script>
 <script src="shared.js"></script>
 <script src="importer.js"></script>
+<script src="library.js"></script>
 <script src="host.js"></script>
 <script src="host-conn.js"></script>
 <script src="host-cal.js"></script>
