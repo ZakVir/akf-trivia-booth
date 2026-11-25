@@ -41,6 +41,10 @@ Commit, push, review and merge on your own. Never wait for approval to push or m
    but do not wait for it to merge.
 
 ## Hosting
-- Local (the booth): double-click `start.command` -> http://localhost:8787 (server.py sends COOP/COEP).
-- Static link: GitHub Pages from `main` (root) -> https://zakvir.github.io/akf-trivia-booth/ . `coi-serviceworker.min.js`
-  adds COOP/COEP there. Vercel also works (`vercel.json`). The AI question cleanup needs server.py, so it is local-only.
+- **Live (main link): https://akf-trivia-booth.vercel.app** - Vercel project `akf-trivia-booth` (team zakvirs-projects), linked to
+  this GitHub repo: every merge to `main` deploys to production. `vercel.json` sends COOP/COEP/CORP and redirects / to host.html;
+  `api/parse.js` (AI importer -> NVIDIA) and `api/health.js` are Vercel functions. NVIDIA_API_KEY is a *sensitive* Vercel env var
+  (production + preview), never in the repo. Previews need a Vercel login; production is public.
+- Local (the booth, offline): double-click `start.command` -> http://localhost:8787 (server.py: COOP/COEP, /api/parse with the key
+  from a private `.env`, and the question-set database `questions.db`).
+- GitHub Pages also works as a static mirror (coi-serviceworker adds COOP/COEP) but has no /api: no AI import there.

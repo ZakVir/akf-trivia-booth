@@ -294,7 +294,8 @@
       <details style="margin-bottom:8px"><summary style="cursor:pointer;font-weight:700">AI helper settings (optional, free NVIDIA key)</summary>
         <div class="field"><label>NVIDIA API key</label><input type="password" id="nimKey" placeholder="nvapi-..." style="width:260px"></div>
         <div class="field"><label>Model</label><input type="text" id="nimModel" style="width:260px"></div>
-        <div class="hint">When a key is set (here, in the booth's .env on the Mac, or in Vercel), every import is read by the AI; the built-in reader is used if the AI is unavailable. The text you import is sent to NVIDIA's API through the booth's server. Leave empty to stay fully offline.</div>
+        <div class="field"><label>Booth import code</label><input type="password" id="nimCode" placeholder="only on the web version" style="width:260px"></div>
+        <div class="hint">When a key is set (here, in the booth's .env on the Mac, or in Vercel, plus the booth import code on the web), every import is read by the AI; the built-in reader is used if the AI is unavailable. The text you import is sent to NVIDIA's API through the booth's server. Leave empty to stay fully offline.</div>
       </details>
       <div id="impStatus" class="hint"></div>
       <div id="impReview"></div>

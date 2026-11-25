@@ -10,6 +10,8 @@
   const savedModel = lsGet('akf-nim-model');
   $('nimModel').value = (!savedModel || /llama-3\.1-8b/.test(savedModel)) ? Importer.DEFAULT_MODEL : savedModel;   // the old default was retired by NVIDIA
   $('nimKey').onchange = e => { lsSet('akf-nim-key', e.target.value.trim()); aiHealth = null; showAiState(); };
+  $('nimCode').value = lsGet('akf-import-code') || '';
+  $('nimCode').onchange = e => { lsSet('akf-import-code', e.target.value.trim()); aiHealth = null; showAiState(); };
   $('nimModel').onchange = e => lsSet('akf-nim-model', e.target.value.trim());
   let readText = '', sourceName = '';                                     // the paste-box text that was last read; where the current import came from
 
@@ -45,10 +47,11 @@
   async function aiReady() {
     if ($('nimKey').value.trim()) return true;
     if (!aiHealth) { try { const r = await fetch('/api/health', { cache: 'no-store' }); aiHealth = r.ok ? await r.json() : { ok: false }; } catch (e) { aiHealth = { ok: false }; } }
-    return !!aiHealth.envKey;
+    return !!aiHealth.envKey && (!aiHealth.needsCode || !!$('nimCode').value.trim());   // the web version also needs the booth import code
   }
   async function showAiState() {
-    $('aiState').innerHTML = (await aiReady()) ? '<b style="color:#248A3D">AI reading on</b> (NVIDIA Nemotron)' : '<span>AI reading off: add a key in AI helper settings</span>';
+    const on = await aiReady(), wantsCode = aiHealth && aiHealth.envKey && aiHealth.needsCode;
+    $('aiState').innerHTML = on ? '<b style="color:#248A3D">AI reading on</b> (NVIDIA Nemotron)' : `<span>AI reading off: ${wantsCode ? 'enter the booth import code' : 'add a key'} in AI helper settings</span>`;
   }
   document.querySelector('.tab[data-tab="import"]').addEventListener('click', showAiState);
   $('openImport').addEventListener('click', showAiState);
@@ -59,7 +62,7 @@
     const t0 = performance.now();
     try {
       const key = $('nimKey').value.trim();
-      const r = await Importer.aiParse(text, { key: key || undefined, model: $('nimModel').value.trim() || undefined });
+      const r = await Importer.aiParse(text, { key: key || undefined, code: $('nimCode').value.trim() || undefined, model: $('nimModel').value.trim() || undefined });
       if (r.questions.length) await handleResult({ questions: r.questions, warnings: r.warnings || [], rawText: text }, `${label}, read by AI in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
       else { const f = Importer.parseText(text); f.warnings = ['The AI found nothing, so the built-in reader was used.'].concat(f.warnings || []); await handleResult(f, label); }
     } catch (e) {

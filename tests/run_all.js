@@ -1,6 +1,6 @@
 // Runs every automatic test and prints one summary line. Usage:  node tests/run_all.js   (add --slow to include the model tests)
 const { spawnSync } = require('child_process'), path = require('path'), fs = require('fs');
-const fast = ['pose_logic', 'server_sets', 'leaderboard', 'mascot_director', 'tracker_jitter', 'tracker_cross', 'gesture', 'scenarios', 'reid_correction', 'importer', 'buzz_logic'];
+const fast = ['pose_logic', 'vercel_api', 'server_sets', 'leaderboard', 'mascot_director', 'tracker_jitter', 'tracker_cross', 'gesture', 'scenarios', 'reid_correction', 'importer', 'buzz_logic'];
 const slow = ['yolo/yolo-pose', 'reid/reid'];
 const list = fast.concat(process.argv.includes('--slow') ? slow : []);
 let bad = 0;
