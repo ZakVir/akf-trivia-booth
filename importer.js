@@ -1238,7 +1238,8 @@
       };
       var resp;
       try {
-        resp = await fetchImpl(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: opts.signal });
+        var hdrs = { 'Content-Type': 'application/json' }; if (opts.code) hdrs['X-Booth-Code'] = String(opts.code);   // the booth import code (hosted proxy)
+        resp = await fetchImpl(endpoint, { method: 'POST', headers: hdrs, body: JSON.stringify(body), signal: opts.signal });
       } catch (e) {
         throw new Error("Couldn't reach the AI service (" + ((e && e.message) || 'network error') + '). Check the connection and try again.');
       }

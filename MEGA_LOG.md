@@ -288,3 +288,16 @@ Hosting: vercel.json sends COOP/COEP/CORP (multi-threaded wasm) and redirects / 
   wrong_answer; answer shown -> idle_happy. No WebGL or models -> the flat SVG face stays.
 - Devin Review only runs when a PR is opened, not on later pushes: follow-up commits get self-review only.
 
+---------------------------------------------------------------------------------------------------
+## 14. HOSTING ON VERCEL + AI IMPORT FIX (2026-11-25)
+
+- NVIDIA retired meta/llama-3.1-8b-instruct (HTTP 410): AI import was broken. New default nvidia/nemotron-3.5-bolt-e4b with
+  chat_template_kwargs.enable_thinking=false. Benchmarked on two messy sets (tests in scratch, not committed): Bolt 7/7 + 5/5 correct in
+  3-5 s; nemotron-3.5-lightning faster (~2 s) but dropped spoken questions; glm-5.3-flash unreachable; minimax overloaded.
+- Vercel: project akf-trivia-booth (prj_oScevJjeOVxP1KrJkvFPBXnhRf6I), git-linked, framework none, no build, output ".".
+  NVIDIA_API_KEY = sensitive env var. Vercel Authentication only on previews. Live test: AI import 7/7 in 6 s, isolated page, 0 errors.
+  api/parse.js guards: same-origin (Origin/Sec-Fetch-Site), JSON only, model allowlist, 200 KB / 4096-token caps.
+- server.py: questions.db (SQLite) set library under /api/sets (localhost + JSON only), .env key loading. The import-panel UI for saved
+  sets is in progress (stash/branch feat/ai-import-and-library -> next PR). On Vercel the sets stay in the browser (db:false).
+- The NVIDIA key was pasted in chat: rotate it on build.nvidia.com and update the Vercel env var.
+
