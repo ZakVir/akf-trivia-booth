@@ -53,6 +53,7 @@ async function openCamera(deviceId) {
 }
 async function camera() {
   if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;                                                          // a failed retest must not leave a dead stream behind
   let s = await openCamera($('camSel').value);
   let devs = await fillCameraList();
   const first = s.getVideoTracks()[0].label;
@@ -68,7 +69,8 @@ async function camera() {
   add('', 'Cameras shown to the app', devs.map(d => d.label).join(' | ') + '  (Sony Imaging Edge is blocked and hidden)');
   if (!v.requestVideoFrameCallback) { add('warn', 'Real frame rate', 'cannot measure (no requestVideoFrameCallback)'); return; }
   let n = 0, t0 = 0, last = 0, maxGap = 0;
-  await new Promise(res => { const cb = (now) => { if (!t0) t0 = now; else maxGap = Math.max(maxGap, now - last); last = now; n++; if (now - t0 < 3000) v.requestVideoFrameCallback(cb); else res(); }; v.requestVideoFrameCallback(cb); });
+  await Promise.race([sleep(6000), new Promise(res => { const cb = (now) => { if (!t0) t0 = now; else maxGap = Math.max(maxGap, now - last); last = now; n++; if (now - t0 < 3000) v.requestVideoFrameCallback(cb); else res(); }; v.requestVideoFrameCallback(cb); })]);   // never hang if no frames come
+  if (n < 2) { add('bad', 'Real camera frame rate', 'the camera sent no pictures in 6 s'); return; }
   const fps = (n - 1) * 1000 / (last - t0);
   add(fps >= 55 ? 'ok' : fps >= 28 ? 'warn' : 'bad', 'Real camera frame rate', `${fps.toFixed(1)} fps over 3 s (longest gap ${maxGap.toFixed(0)} ms). ` + (fps >= 55 ? 'Great for slow motion.' : fps >= 28 ? 'Normal webcam speed; slow motion uses frame blending.' : 'Very slow: wrong camera, a busy Mac, or a virtual camera.'));
 }
@@ -95,16 +97,17 @@ async function yolo() {
 
 async function recorder() {
   if (!stream) await camera();
+  if (!stream) { add('bad', 'Replay recorder speed', 'no working camera to test with'); return; }
   const v = $('v'), c = document.createElement('canvas'); c.width = 480; c.height = 270; const g = c.getContext('2d');
   let frames = 0, done = 0, pending = 0, shed = 0, bytes = 0; const t0 = performance.now();
-  await new Promise(res => {
+  await Promise.race([sleep(7000), new Promise(res => {
     const cb = () => {
       frames++;
       if (pending < 4) { g.drawImage(v, 0, 0, 480, 270); pending++; c.toBlob(b => { pending--; if (b) { done++; bytes += b.size; } }, 'image/jpeg', 0.72); } else shed++;
       if (performance.now() - t0 < 4000) v.requestVideoFrameCallback(cb); else res();
     };
     v.requestVideoFrameCallback(cb);
-  });
+  })]);
   await sleep(300);
   const sec = (performance.now() - t0) / 1000, fps = done / sec;
   add(fps >= 55 ? 'ok' : fps >= 28 ? 'warn' : 'bad', 'Replay recorder speed', `saved ${done} of ${frames} camera frames in ${sec.toFixed(1)} s = ${fps.toFixed(0)}/s, skipped ${shed}. 9 s of replay memory is about ${(bytes / sec * 9 / 1048576).toFixed(1)} MB.`);

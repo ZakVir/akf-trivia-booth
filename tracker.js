@@ -5,6 +5,15 @@ function iouBox(a, b) {                       // boxes {x0,y0,x1,y1}
   const u = (a.x1 - a.x0) * (a.y1 - a.y0) + (b.x1 - b.x0) * (b.y1 - b.y0) - i;
   return u > 0 ? i / u : 0;
 }
+// same body? skeletons compared keypoint by keypoint (two people side by side never match), else boxes almost the same
+function sameBody(a, b) {
+  if (a && b && a.kp && b.kp) {
+    let n = 0, d = 0; const sc = Math.max(a.s, b.s);
+    for (let i = 0; i < 17; i++) if (a.kp[i].v > 0.45 && b.kp[i].v > 0.45) { n++; d += Math.hypot(a.kp[i].x - b.kp[i].x, a.kp[i].y - b.kp[i].y); }
+    if (n >= 4) return d / n / sc < 0.3;
+  }
+  return !!(a && b && a.box && b.box && iouBox(a.box, b.box) > 0.7);
+}
 function appDist(a, b) {                       // clothing-colour histograms: 0 = identical, 1 = completely different
   let bc = 0; for (let i = 0; i < a.length; i++) bc += Math.sqrt(a[i] * b[i]);
   return Math.sqrt(Math.max(0, 1 - bc));
@@ -12,7 +21,7 @@ function appDist(a, b) {                       // clothing-colour histograms: 0 
 
 /* One-Euro filter: very steady when the person is still, quick when they really move. Units: normalised picture coordinates. */
 const HOLD_MS = 250;
-const EURO_MIN = 0.6, EURO_BETA = 5, EURO_D = 1.0;
+const EURO_MIN = 1.6, EURO_BETA = 5, EURO_D = 1.0;   // tuned on real clips (tests/eval): steady when still, little lag when moving
 const _alpha = (cut, dt) => { const tau = 1 / (2 * Math.PI * cut); return 1 / (1 + tau / dt); };
 function oneEuro(st, x, dt) {
   if (st.x === undefined) { st.x = x; st.dx = 0; return x; }
@@ -47,7 +56,8 @@ class Tracker {
         const ad = (t.app && d.app) ? appDist(t.app, d.app) : null;
         if (nd > 2.4 && !(iou > 0.3)) return;                                      // far away: not the same person
         if (ad != null && ad > 0.6 && nd > 0.6 && !(iou > 0.5)) return;            // clearly different clothes: not them
-        pairs.push([nd * 0.5 + (iou == null ? 0 : (1 - iou) * 0.4) + (ad == null ? 0 : ad * 0.8), t, i]);
+        const stale = Math.min(1, (now - t.seen) / 1500) * 0.35;               // a marker that has not seen anyone for a while is the last choice
+        pairs.push([nd * 0.5 + (iou == null ? 0 : (1 - iou) * 0.4) + (ad == null ? 0 : ad * 0.8) + stale, t, i]);
       });
     }
     pairs.sort((a, b) => a[0] - b[0]);
@@ -59,15 +69,19 @@ class Tracker {
       const rx0 = t.rx === undefined ? t.tx : t.rx, ry0 = t.ry === undefined ? t.ty : t.ry;
       t.vx = 0.6 * (t.vx || 0) + 0.4 * clamp((d.x - rx0) / dtr); t.vy = 0.6 * (t.vy || 0) + 0.4 * clamp((d.y - ry0) / dtr);
       t.rx = d.x; t.ry = d.y;
-      t.updAt = now; t.box = d.box || t.box;
+      t.updAt = now; t.box = d.box || t.box; t.det = d;
       if (d.app) { if (!t.app) t.app = d.app.slice(); else for (let k = 0; k < t.app.length; k++) t.app[k] = 0.9 * t.app[k] + 0.1 * d.app[k]; }
       // steady marker: smooth the raw detection, then ignore movement smaller than ~12% of the person's width
       t.fx = t.fx || {}; t.fy = t.fy || {};
       const ox = oneEuro(t.fx, d.x, dtr), oy = oneEuro(t.fy, d.y, dtr);
       const speed = Math.hypot(t.fx.dx, t.fy.dx);                                    // how fast they are really moving (picture widths per second)
-      t.moving = speed > 0.45 * t.s;                                                  // walking pace and up
-      if (t.moving || Math.hypot(ox - t.tx, oy - t.ty) > 0.12 * t.s) { t.tx = ox; t.ty = oy; }   // moving: follow every update; resting: ignore jitter
-      t.evx = t.moving ? t.fx.dx : 0; t.evy = t.moving ? t.fy.dx : 0;                 // used to glide the drawing between detections
+      t.moving = speed > 0.45 * t.s;
+      // soft dead-zone: movement smaller than ~6% of the person's width is ignored (no shaking when still), but past that the target
+      // follows continuously, trailing by at most that slack. No hold-then-jump, so slow movement stays smooth.
+      const ex = ox - t.tx, ey = oy - t.ty, ed = Math.hypot(ex, ey), dz = 0.06 * t.s, otx = t.tx, oty = t.ty;
+      if (ed > dz) { const f = (ed - dz) / ed; t.tx += ex * f; t.ty += ey * f; }
+      const tvx = (t.tx - otx) / dtr, tvy = (t.ty - oty) / dtr;
+      t.evx = 0.5 * (t.evx || 0) + 0.5 * tvx; t.evy = 0.5 * (t.evy || 0) + 0.5 * tvy;   // target velocity, used to glide the drawing between detections
       if (Math.abs(d.s - t.s) > 0.12 * t.s) t.s += (d.s - t.s) * 0.3;
       t.seen = now;
       if (d.insideExp) t.outSince = 0; else if (!t.outSince) t.outSince = now;
@@ -79,7 +93,7 @@ class Tracker {
     const newCands = [];
     dets.forEach((d, i) => {
       if (usedDet.has(i) || !d.inside || d.good === false) return;
-      if (this.tracks.some(t => Math.hypot(d.x - t.tx, d.y - t.ty) < 0.5 * Math.max(d.s, t.s) + 0.02)) return;
+      if (this.tracks.some(t => (t.det && now - t.seen < 400 && (sameBody(t.det, d) || (t.box && d.box && iouBox(t.box, d.box) > 0.6))) || Math.hypot(d.x - t.tx, d.y - t.ty) < 0.3 * Math.max(d.s, t.s))) return;   // a second pose of someone already tracked, not a new person
       const c = this.cands.find(c => Math.hypot(c.x - d.x, c.y - d.y) < 0.08 + d.s);
       const hits = c ? c.hits + 1 : 1;
       if (hits >= 3 && this.tracks.length < PALETTE.length) {
@@ -106,12 +120,15 @@ class Tracker {
     const dead = new Set();
     for (let i = 0; i < this.tracks.length; i++) for (let j = i + 1; j < this.tracks.length; j++) {
       const a = this.tracks[i], b = this.tracks[j], key = a.id + '-' + b.id;
-      if (Math.hypot(a.tx - b.tx, a.ty - b.ty) < 0.5 * Math.max(a.s, b.s) + 0.02) {
+      const near = Math.hypot(a.tx - b.tx, a.ty - b.ty) < 0.6 * Math.max(a.s, b.s);
+      const fresh = now - a.seen < 400 && now - b.seen < 400;
+      const same = near && (fresh && a.det && b.det ? sameBody(a.det, b.det) : Math.hypot(a.tx - b.tx, a.ty - b.ty) < 0.3 * Math.max(a.s, b.s));   // people side by side (or a child on a parent's shoulders) stay two
+      if (same) {
         if (!this.close[key]) this.close[key] = now;
         else if (now - this.close[key] > 600) { dead.add(a.born > b.born ? a : b); delete this.close[key]; }
       } else delete this.close[key];
     }
-    if (dead.size) this.tracks = this.tracks.filter(t => !dead.has(t));
+    if (dead.size) { this.tracks = this.tracks.filter(t => !dead.has(t)); const ids = new Set([...dead].map(t => String(t.id))); for (const k in this.close) if (k.split('-').some(x => ids.has(x))) delete this.close[k]; }
     this.lost = this.lost.filter(l => now - l.at < 20000);
   }
 
@@ -122,18 +139,18 @@ class Tracker {
     if (t.force) { if (now < t.force) return; t.force = 0; t.raised = false; }
     const pwy = t.pwy, pline = t.pline, pT = t.pT;
     t.pwy = d.wy; t.pline = d.line; t.pT = now;
-    const stillUp = t.raised && d.wy !== undefined && d.release !== undefined && d.wy < d.release;   // hand still above the (lower) release line
+    const stillUp = t.raised && !!d.held;                             // hand still up (lower bar than raising)
     if (d.raised || stillUp) {
       if (!t.rc) {
         let at = now;
-        if (pwy !== undefined && d.wy !== undefined && pline !== undefined && pwy >= pline) {
+        if (pwy !== undefined && d.wy !== undefined && pline !== undefined && pwy >= pline && now - pT <= 250) {   // only between two close detections: never back-date across a tracking gap
           const s0 = pline - pwy, s1 = d.line - d.wy;                       // signed height above the line: before (<0) and now (>0)
           if (s1 > s0) at = pT + Math.min(1, Math.max(0, -s0 / (s1 - s0))) * (now - pT);
         }
         t.rcStart = at;
       }
       t.rc++; t.low = 0; if (d.raised) t.hand = { x: d.hx, y: d.hy };
-      if (!t.raised && now - t.rcStart >= HOLD_MS) { t.raised = true; this.events.push({ color: t.color, at: t.rcStart, hand: t.hand }); }
+      if (!t.raised && t.rc >= 2 && now - t.rcStart >= HOLD_MS) { t.raised = true; this.events.push({ color: t.color, at: t.rcStart, hand: t.hand }); }
     } else {
       if (t.rc && !t.raised) t.falseStarts = (t.falseStarts || 0) + 1;       // started to raise, changed their mind
       t.rc = 0;
@@ -165,15 +182,15 @@ class Tracker {
       const used = new Set(this.tracks.map(c => c.color));
       const l = this.lost.filter(l => l.emb && !used.has(l.color) && dist(l.emb, it.emb) < 0.3 && now - l.at < 20000)[0];
       if (l && same > 0.5) {                                              // looks like someone who left earlier
-        if (++t.mis >= 3) { this.cool[t.color] = now; t.color = l.color; t.emb = Float32Array.from(it.emb); t.mis = 0; this.lost.splice(this.lost.indexOf(l), 1); }
+        if (++t.mis >= 3) { (this.swapQ = this.swapQ || []).push([t.color, l.color]); this.cool[t.color] = now; t.color = l.color; t.emb = Float32Array.from(it.emb); t.mis = 0; this.lost.splice(this.lost.indexOf(l), 1); }
       } else t.mis = 0;
     }
   }
 
   step(dt, now) { // smooth motion for drawing, every screen frame
-    const k = 1 - Math.exp(-dt / 0.085), ks = 1 - Math.exp(-dt / 0.18);
+    const k = 1 - Math.exp(-dt / 0.07), ks = 1 - Math.exp(-dt / 0.18);
     for (const t of this.tracks) {
-      const age = now && t.updAt ? Math.min(0.12, Math.max(0, (now - t.updAt) / 1000)) : 0;   // glide ahead for up to 120 ms while waiting for the next detection
+      const age = now && t.updAt ? Math.min(0.1, Math.max(0, (now - t.updAt) / 1000)) : 0;   // glide ahead for up to 120 ms while waiting for the next detection
       const gx = t.tx + (t.evx || 0) * age, gy = t.ty + (t.evy || 0) * age;
       t.x += (gx - t.x) * k; t.y += (gy - t.y) * k;
       t.rs = (t.rs === undefined ? t.s : t.rs) + (t.s - (t.rs === undefined ? t.s : t.rs)) * ks;   // size glides too

@@ -233,3 +233,42 @@ Also: make sure Search (the user's real browser) ends up on YOLO: Setup > Connec
 - Their earlier report: YOLO26n wasm (multi-thread) about 84 ms is about as fast as WebGPU in Search; YOLO26s webgpu 231 ms. Expect the app to choose wasm or webgpu by measurement.
 - Test clips from the user (TODO 24), real 30 questions, sound effects, host layout from paper drawing, AKF 3D logo markers (after polish; link to come; check AKF logo-use rules), detection-in-a-worker (not done).
 - Memory notes saved in `~/.claude/projects/<this project>/memory/` (akf-booth-project.md, akf-booth-rules.md).
+
+---------------------------------------------------------------------------------------------------
+## 11. BUG-FIX ROUND (2026-11-24, branch fix/smooth-marker-yolo-fallback, PR #1)
+
+Three code reviews (detection, buzzer/replay, host/server) + headless-browser end-to-end runs. Fixed:
+- Marker stutter: tracker soft dead-zone (no hold-then-jump). Test `tracker_jitter` now also measures stop-and-go on slow drift.
+- YOLO -> MediaPipe fallback: provider create timeout (20 s) + retry on ORT "Session already started"; slow-wasm rule 10 frames > 350 ms; 3-minute YOLO retry now actually runs; benchmark failures handled; every fallback writes `det.yoloNote`.
+- Sessions: `dispose()` in yolo-pose/reid waits for the running job; stale re-ID sessions/results after a settings change are dropped.
+- Camera: auto-picked camera unplugged -> picks another; saved camera found by name is used.
+- Hands: hidden wrists no longer hold a hand "up"; no back-dated raise times across tracking gaps; hold needs 2 frames.
+- Replay: progressive decode (plays after the first 8 frames), lead-in 0.9 s (was 1.6 s), only shown frames decoded, recorder pauses JPEG encoding and live kites stop drawing during a replay, "Replay again" works any time, verdict + banner never cut off, reopened old hands never replay stale footage, rVFC recorder re-hooks after a camera restart.
+- Host: "Point to", New group, step back to 0 and same-question goto all reset the live buzzer (`buzz-clear` now unlocks); +10 s after time ran out; digit keys on a focused dropdown score; Exit full screen during a replay; -1 at 0 no empty undo, -1 lowers streak.
+- Import: Restore built-in questions really restores questions.js; Ask AI uses what is on screen; same file can be re-picked; server key honoured; error numbering; storage-blocked safe.
+- server.py: AI proxy only accepts JSON requests addressed to localhost. start.command: reuses a running server, reports a busy port, waits for the server before opening the page.
+- check.js never hangs when the camera sends no frames. Fonts added in `fonts/` (OFL).
+Still to verify on the Mac with the real camera: YOLO provider/fallback note in Setup > Connectivity, marker smoothness, replay start delay with real pictures.
+
+---------------------------------------------------------------------------------------------------
+## 12. ACCURACY ROUND (2026-11-25): measured on real video, not guessed
+
+New: `pose-logic.js` (one body -> marker spot, raised hand, duplicate check; shared by cam.js and the tests) and an
+offline harness `tests/eval/`:
+- `node tests/eval/detect-clips.js <outDir> clip.mp4 ...` runs the REAL YOLO26n (ort wasm in node) at 12/s and caches people per frame.
+- `node tests/eval/eval.js <outDir>/*.n.json` replays them through pose-logic + tracker exactly like the browser and scores:
+  coverage, colour switches, merged people, ghost markers, shake, lag, raise events. `LEGACY=<dir>` scores an older version.
+- Clips used (free Mixkit stock, kept OUT of the repo): friends walking side by side (8900), child on dad's shoulders (39767),
+  group hug (4709), office high-five (9088), classroom raises (6672, 35968, 11553), conference audience from behind (13192),
+  NEGATIVES hand over the face (46818) and palm to camera (40194).
+Results vs the previous version (same clips): coverage 26-88% -> 92-100%; child-on-shoulders merged 16 -> 0; hug merged
+31 -> 9; switches 9 -> 5; lag ~-20%; hand-over-face false raise gone.
+Changes: head centre = confidence-blended nose/eyes/ears (no jumps); face not seen -> marker from the box top; duplicates
+only when skeletons match point-by-point or boxes coincide (never "heads close"); tracker spawn/merge use the same rule;
+stale markers are the last choice for a detection; raise = wrist above head, or bent raise with hand at forehead+ , elbow
+up and forearm upright; from behind, a box reaching well above the head; held hand uses its own (lower) bar - the old
+`release` field was never set (assignment ended up inside a comment). Smoothing tuned on the clips: One-Euro min cutoff
+1.6 Hz, dead-zone 6% of body width. Detection default 15/s (old saved 12/s migrated), gentler slow-machine back-off.
+Known limits: a raise must be held 0.25 s (quick high-fives can be missed); people cut by the picture edge or right up
+against the lens can flicker; the model sometimes cannot see wrists of people at the very edge.
+Hosting: vercel.json sends COOP/COEP/CORP (multi-threaded wasm) and redirects / to host.html.

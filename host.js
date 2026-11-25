@@ -4,10 +4,10 @@ const $ = id => document.getElementById(id);
 const SOLO = true;   // one window only: the live view runs inside this page; the Mac screen is what gets projected
 
 const stored = (() => { try { const l = JSON.parse(localStorage.getItem(QKEY)); return Array.isArray(l) && l.length ? l : null; } catch (e) { return null; } })();
+const SAMPLE_QUESTIONS = (window.QUESTIONS || []).slice();     // the built-in set from questions.js (copied before a saved import replaces it)
 if (stored) window.QUESTIONS = stored;
-const SAMPLE_QUESTIONS = (window.QUESTIONS || []).slice();
 
-const DEFAULT_CAM = { on: true, deviceId: '', detect: true, sim: false, simN: 5, mirror: true, showQuad: false, kites: true, gpu: false, detHz: 12, ignoreQuad: true, debug: false, mode: 'fast', sens: 'normal', engine: 'auto', handSens: 'normal', simDup: false, buzzer: true, preferBuiltIn: true, quad: DEFAULT_QUAD, tape: null };
+const DEFAULT_CAM = { on: true, deviceId: '', detect: true, sim: false, simN: 5, mirror: true, showQuad: false, kites: true, gpu: false, detHz: 15, ignoreQuad: true, debug: false, mode: 'fast', sens: 'normal', engine: 'auto', handSens: 'normal', simDup: false, buzzer: true, preferBuiltIn: true, quad: DEFAULT_QUAD, tape: null };
 const zeroScores = () => Object.fromEntries(TEAM_ORDER.map(t => [t, 0]));
 const fresh = () => ({
   qId: 0, step: 0, kid: false, filter: 'all', teams: ['red', 'blue', 'gold'],
@@ -20,6 +20,7 @@ try { const o = JSON.parse(localStorage.getItem(KEY) || '{}'); S = Object.assign
 catch (e) { S = fresh(); }
 if (S.qId >= QUESTIONS.length) S.qId = 0;
 S.cam.sim = false; S.cam.debug = false;      // a reload never comes back in practice mode or with debug dots
+if (!S.cam.hz15) { if (S.cam.detHz === 12) S.cam.detHz = 15; S.cam.hz15 = true; }   // the old default (12/s) moves up to the new one (15/s): less lag, quicker hands
 
 let buzz = null, orderList = [];
 let history = [], tvSeen = 0, tvInfo = null, camStatus = { phase: 'off', devices: [], det: { state: 'off' }, people: { frame: 0, square: 0 } }, live = [];
@@ -52,7 +53,8 @@ function saveQuestions(list) {
 /* ---------- navigation ---------- */
 const visible = () => QUESTIONS.map((q, i) => i).filter(i => S.filter === 'all' || QUESTIONS[i].level === S.filter);
 function resetTimer() { const d = S.timer.duration * 1000; S.timer = { duration: S.timer.duration, total: d, left: d, running: false, endsAt: 0 }; }
-function goto(id) { buzz = null; orderList = []; S.qId = id; S.step = 0; resetTimer(); commit(); }
+const clearBuzz = () => { buzz = null; orderList = []; CH.postMessage({ type: 'buzz-clear' }); };   // live view: forget the old hands-up order
+function goto(id) { clearBuzz(); S.qId = id; S.step = 0; resetTimer(); commit(); }
 function move(dir) {
   const v = visible(); if (!v.length) return;
   const p = v.indexOf(S.qId);
@@ -60,24 +62,25 @@ function move(dir) {
   goto(v[(p + dir + v.length) % v.length]);
 }
 function stepForward() { if (S.step < 2) { S.step++; pauseTimer(); commit(); } }
-function stepBack() { if (S.step > 0) { S.step--; commit(); } }
+function stepBack() { if (S.step > 0) { S.step--; if (S.step === 0) clearBuzz(); commit(); } }
 
 /* ---------- scoring ---------- */
 function snap() { history.push(JSON.stringify({ scores: S.scores, streaks: S.streaks, step: S.step, qId: S.qId })); if (history.length > 60) history.shift(); }
 function score(team, d) {
   if (!S.board.includes(team)) return;
+  if (d < 0 && !S.scores[team]) return;                                   // nothing to take away: no empty undo step
   snap();
   S.scores[team] = Math.max(0, S.scores[team] + d);
   if (d > 0) {
     for (const t of TEAM_ORDER) S.streaks[t] = t === team ? S.streaks[t] + 1 : 0;
     S.step = Math.max(S.step, qType(QUESTIONS[S.qId]) === 'free' ? S.step : 1); pauseTimer();
     commit(evt('win', { team, streak: S.streaks[team] }));
-  } else commit();
+  } else { S.streaks[team] = Math.max(0, S.streaks[team] - 1); commit(); }
 }
 function nobody() { snap(); for (const t of TEAM_ORDER) S.streaks[t] = 0; S.step = Math.max(S.step, 1); pauseTimer(); commit(evt('oops')); }
 function undo() { const h = history.pop(); if (!h) return; const o = JSON.parse(h); S.scores = o.scores; S.streaks = o.streaks; if (o.qId === S.qId) S.step = o.step; commit(); }   // never reveal another question's answer
 function resetScores() { if (!confirm('Reset all scores?')) return; snap(); S.scores = zeroScores(); S.streaks = zeroScores(); commit(); }
-function newGroup() { snap(); S.scores = zeroScores(); S.streaks = zeroScores(); S.step = 0; resetTimer(); commit(); }
+function newGroup() { snap(); clearBuzz(); S.scores = zeroScores(); S.streaks = zeroScores(); S.step = 0; resetTimer(); commit(); }
 
 /* ---------- timer ---------- */
 const timerLeft = () => S.timer.running ? Math.max(0, S.timer.endsAt - Date.now()) : S.timer.left;
@@ -87,7 +90,7 @@ function toggleTimer() {
   else { if (S.timer.left <= 0) resetTimer(); S.timer.running = true; S.timer.endsAt = Date.now() + S.timer.left; }
   commit();
 }
-function addTime() { if (S.timer.running) S.timer.endsAt += 10000; else S.timer.left += 10000; S.timer.total = Math.max(S.timer.total, timerLeft()); commit(); }
+function addTime() { if (S.timer.running) S.timer.endsAt = Math.max(S.timer.endsAt, Date.now()) + 10000; else S.timer.left += 10000; S.timer.total = Math.max(S.timer.total, timerLeft()); commit(); }
 
 /* ---------- rendering ---------- */
 function renderHost() {
@@ -208,6 +211,7 @@ document.addEventListener('change', e => { if (e.target.tagName === 'SELECT') e.
 addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || e.altKey || dlg.open || e.repeat) return;       // a held key must not score twice
   const tg = e.target;
+  if (tg.tagName === 'SELECT' && /^[1-8]$/.test(e.key)) { e.preventDefault(); tg.blur(); score(TEAM_ORDER[+e.key - 1], 1); return; }   // a dropdown left focused must not eat a score key
   if (tg.tagName === 'TEXTAREA' || tg.tagName === 'SELECT' || (tg.tagName === 'INPUT' && !['checkbox', 'radio', 'button'].includes(tg.type))) return;
   const k = e.key.toLowerCase();
   if (/^[1-8]$/.test(k)) score(TEAM_ORDER[+k - 1], 1);
@@ -268,7 +272,7 @@ if (/laptop/.test(location.search)) Object.assign(S.cam, { on: true, sim: false,
 fitPreview(); renderHost();
 $('preview').addEventListener('load', () => { commit(); if (!SOLO) CH.postMessage({ type: 'cam-snap', on: true, preview: true }); });
 document.body.classList.add('solo');
-$('preview').src = 'audience.html';
+$('preview').src = 'audience.html';           // the only load: host.html leaves the frame empty so it is not loaded twice
 
 /* Full screen: the live view fills the whole page (button / key P / Esc). Replays take over automatically, then give it back. */
 let fsManual = false, fsReplay = false;
@@ -285,7 +289,7 @@ function nativeFs(on) {            // also hide the browser's own bars, so proje
     else if (!on && document.fullscreenElement) (document.exitFullscreen || document.webkitExitFullscreen || (() => {})).call(document);
   } catch (e) {}
 }
-function toggleFs() { fsManual = !fsManual; applyFs(); }       // in-page only: for the browser's own full screen use Ctrl+Cmd+F
+function toggleFs() { if (fsManual || fsReplay) { if (fsReplay) CH.postMessage({ type: 'replay-skip' }); fsManual = fsReplay = false; } else fsManual = true; applyFs(); }       // in-page only: for the browser's own full screen use Ctrl+Cmd+F
 document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && fsManual) { fsManual = false; applyFs(); } });
 $('replayBtn').onclick = () => CH.postMessage({ type: 'replay-last' });
 $('fsBtn').onclick = toggleFs; $('fsOverlay').onclick = toggleFs;
