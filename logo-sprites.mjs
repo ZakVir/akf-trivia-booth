@@ -62,7 +62,7 @@ function pump(aspect) {
       get(hex) {
         const k = String(hex).toUpperCase(), r = ready.get(k);
         if (r) return r;
-        if (!queued.has(k)) { queued.add(k); queue.push(k); requestAnimationFrame(() => pump(fill)); }
+        if (!queued.has(k)) { const start = queue.length === 0; queued.add(k); queue.push(k); if (start) requestAnimationFrame(() => pump(fill)); }   // one pump works through the queue
         return null;
       }
     };
