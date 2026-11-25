@@ -10,6 +10,8 @@
   const savedModel = lsGet('akf-nim-model');
   $('nimModel').value = (!savedModel || /llama-3\.1-8b/.test(savedModel)) ? Importer.DEFAULT_MODEL : savedModel;   // the old default was retired by NVIDIA
   $('nimKey').onchange = e => lsSet('akf-nim-key', e.target.value.trim());
+  $('nimCode').value = lsGet('akf-import-code') || '';
+  $('nimCode').onchange = e => lsSet('akf-import-code', e.target.value.trim());
   $('nimModel').onchange = e => lsSet('akf-nim-model', e.target.value.trim());
   let readText = '';                                                      // the paste-box text that was last read
 
@@ -58,13 +60,15 @@
     const text = (pasted && pasted !== readText) ? pasted : (rawText || pasted);   // what is on screen now wins over an earlier document
     if (!text) return status('Choose a file or paste text first (AI cleans up what you give it).');
     const key = $('nimKey').value.trim();
-    let serverKey = false;
-    if (!key) { try { const h = await (await fetch('/api/health', { cache: 'no-store' })).json(); serverKey = !!h.envKey; } catch (e) {} }
+    let serverKey = false, needsCode = false;
+    if (!key) { try { const h = await (await fetch('/api/health', { cache: 'no-store' })).json(); serverKey = !!h.envKey; needsCode = !!h.needsCode; } catch (e) {} }
+    const code = $('nimCode').value.trim();
+    if (!key && serverKey && needsCode && !code) { status('Enter the booth import code under “AI helper settings” (or your own NVIDIA key).'); return; }
     if (!key && !serverKey) { status('Add a free NVIDIA key under “AI helper settings” first, or skip AI: most documents work without it.'); return; }
     status('Asking the AI… (this sends the text to NVIDIA\'s free API)');
     $('impAI').disabled = true;
     try {
-      const r = await Importer.aiParse(text, { key: key || undefined, model: $('nimModel').value.trim() || undefined });
+      const r = await Importer.aiParse(text, { key: key || undefined, code: code || undefined, model: $('nimModel').value.trim() || undefined });
       await handleResult({ questions: r.questions, warnings: r.warnings || [], rawText: text }, 'AI');
     } catch (e) { status('AI helper: ' + e.message); }
     $('impAI').disabled = false;

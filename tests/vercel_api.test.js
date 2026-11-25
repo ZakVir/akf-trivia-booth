@@ -27,6 +27,20 @@ const mkReq = (o = {}) => Object.assign({ method: 'POST', headers: { host: 'boot
   ok(res.code === 405, 'GET is refused');
   res = mkRes(); await parse(mkReq({ body: { messages: [{ role: 'user', content: 'x'.repeat(300000) }] } }), res);
   ok(res.code === 413, 'oversized text is refused');
+  // booth import code: the booth's key needs it; a caller's own key does not
+  process.env.BOOTH_IMPORT_CODE = 'akf-test-code';
+  res = mkRes(); health({}, res); ok(res.body.needsCode === true, 'health says a code is needed');
+  sent = null; res = mkRes(); await parse(mkReq(), res);
+  ok(res.code === 401 && !sent, 'without the code the booth key is not used (faked headers are not enough)');
+  res = mkRes(); await parse(mkReq({ headers: Object.assign({}, mkReq().headers, { 'x-booth-code': 'wrong-code-xx' }) }), res);
+  ok(res.code === 401, 'a wrong code is refused');
+  res = mkRes(); await parse(mkReq({ headers: Object.assign({}, mkReq().headers, { 'x-booth-code': 'akf-test-code' }) }), res);
+  ok(res.code === 200 && sent.headers.Authorization === 'Bearer nvapi-test', 'the right code uses the booth key');
+  res = mkRes(); await parse(mkReq({ body: Object.assign({}, mkReq().body, { key: 'nvapi-OWNKEY-abcdefghijklmnopqrstuvwxyz' }) }), res);
+  ok(res.code === 200 && sent.headers.Authorization === 'Bearer nvapi-OWNKEY-abcdefghijklmnopqrstuvwxyz', 'a host\'s own key works without the code (and is the one used)');
+  let last = 0; for (let i = 0; i < 40; i++) { res = mkRes(); await parse(mkReq({ headers: Object.assign({}, mkReq().headers, { 'x-booth-code': 'akf-test-code', 'x-forwarded-for': '9.9.9.9' }) }), res); last = res.code; }
+  ok(last === 429, 'one address sending dozens of requests gets rate-limited');
+  delete process.env.BOOTH_IMPORT_CODE;
   delete process.env.NVIDIA_API_KEY; res = mkRes(); await parse(mkReq(), res);
   ok(res.code === 401, 'no key configured: clear error');
 
