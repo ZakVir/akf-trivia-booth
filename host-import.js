@@ -11,7 +11,34 @@
   $('nimModel').value = (!savedModel || /llama-3\.1-8b/.test(savedModel)) ? Importer.DEFAULT_MODEL : savedModel;   // the old default was retired by NVIDIA
   $('nimKey').onchange = e => lsSet('akf-nim-key', e.target.value.trim());
   $('nimModel').onchange = e => lsSet('akf-nim-model', e.target.value.trim());
-  let readText = '';                                                      // the paste-box text that was last read
+  let readText = '', sourceName = '';                                     // the paste-box text that was last read; where the current import came from
+
+  /* ---------- saved question sets (questions.db on the Mac, or this browser) ---------- */
+  const when = s => new Date(s * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  async function renderLibrary() {
+    const where = await Library.where();
+    $('libWhere').textContent = where === 'mac' ? 'stored on this Mac (questions.db)' : 'stored in this browser';
+    let sets = [];
+    try { sets = await Library.list(); } catch (e) { $('libList').innerHTML = `<div class="hint">Could not read the saved sets: ${esc(e.message)}</div>`; return; }
+    $('libList').innerHTML = sets.length ? sets.map(s => `<div class="lib" data-id="${s.id}"><span class="n">${esc(s.name)}</span><span class="c">${s.count} question${s.count === 1 ? '' : 's'}</span>` +
+      `<span class="c">${when(s.updated)}</span><span><button class="use" data-act="use">Use</button> <button class="del" data-act="del">Delete</button></span></div>`).join('')
+      : '<div class="hint">No saved sets yet. Every set you import is saved here automatically.</div>';
+  }
+  $('libList').onclick = async e => {
+    const b = e.target.closest('button'), row = e.target.closest('.lib'); if (!b || !row) return;
+    const id = Number(row.dataset.id);
+    try {
+      if (b.dataset.act === 'use') { const s = await Library.get(id); saveQuestions(s.questions); status(`Now using “${s.name}” (${s.questions.length} questions).`); }
+      else if (b.dataset.act === 'del' && confirm('Delete this saved set? (The questions on screen stay.)')) { await Library.remove(id); renderLibrary(); }
+    } catch (err) { status('Saved sets: ' + err.message); }
+  };
+  $('libSaveCur').onclick = async () => {
+    const name = $('libName').value.trim() || 'Questions ' + new Date().toLocaleDateString();
+    try { await Library.save(name, QUESTIONS); $('libName').value = ''; status(`Saved the current ${QUESTIONS.length} questions as “${name}”.`); renderLibrary(); }
+    catch (e) { status('Could not save: ' + e.message); }
+  };
+  document.querySelector('.tab[data-tab="import"]').addEventListener('click', renderLibrary);
+  $('openImport').addEventListener('click', renderLibrary);
 
   async function handleResult(r, label) {
     parsed = r; rawText = r.rawText || '';                                // never keep an older document's text around
@@ -23,6 +50,7 @@
     if (!ready()) return;
     status('Reading ' + f.name + '…');
     readText = $('paste').value.trim();                                     // text already in the paste box is older than this file: only new edits override it
+    sourceName = f.name.replace(/\.[a-z0-9]+$/i, '');
     try { await handleResult(await Importer.parseFile(f), f.name); } catch (e) { status('Could not read that file: ' + e.message); }
   }
   $('file').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) readFile(f); };   // cleared so the same file can be picked again after editing it
@@ -77,6 +105,7 @@
     box.innerHTML =
       `<div class="row" style="margin:6px 0"><button class="main" id="impReplace">Replace all questions (${parsed.questions.length})</button>` +
       `<button id="impAdd">Add to existing</button>` +
+      `<input type="text" id="impSetName" placeholder="Name this set" value="${esc(sourceName || ('Imported ' + new Date().toLocaleDateString()))}" style="width:200px">` +
       `<label><input type="checkbox" id="impShuffle" ${parsed.shuffleSuggested ? 'checked' : ''}> shuffle answer positions</label></div>` +
       parsed.questions.map((q, i) => rowHtml(q, i)).join('');
   }
@@ -133,7 +162,10 @@
     if (!clean.length) return status('Nothing to import.');
     const list = add ? QUESTIONS.concat(clean) : clean;
     saveQuestions(list);
+    const setName = ($('impSetName') && $('impSetName').value.trim()) || sourceName || 'Imported set';
     status(`Loaded ${clean.length} question${clean.length === 1 ? '' : 's'}${add ? ' (added)' : ''}. ${list.length} total.`);
-    parsed = null; rawText = ''; readText = ''; $('impReview').innerHTML = '';
+    Library.save(setName, clean).then(() => { status(`Loaded ${clean.length} question${clean.length === 1 ? '' : 's'}${add ? ' (added)' : ''}. ${list.length} total. Saved as “${setName}”.`); renderLibrary(); })
+      .catch(e => status(`Loaded, but could not save it as a set: ${e.message}`));
+    parsed = null; rawText = ''; readText = ''; sourceName = ''; $('impReview').innerHTML = '';
   }
 })();
