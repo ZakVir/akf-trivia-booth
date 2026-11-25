@@ -74,6 +74,8 @@ class MascotController {
     if (this.state !== 'timer_pocket_watch') this.setState('timer_pocket_watch');
   }
 
+  restart() { this.stateEnter = performance.now() / 1000; }                  // play the current state's animation again (a second point)
+
   lookAt(nx, ny) { this.look.x = Math.max(-1, Math.min(1, nx)); this.look.y = Math.max(-1, Math.min(1, ny)); }
 
   frame() {
@@ -88,7 +90,7 @@ class MascotController {
     };
     // gaze eases towards its target (no snapping)
     this.lookNow.x += (this.look.x - this.lookNow.x) * Math.min(1, dt * 6); this.lookNow.y += (this.look.y - this.lookNow.y) * Math.min(1, dt * 6);
-    const yaw = this.lookNow.x * 0.28, pitch = -this.lookNow.y * 0.22;
+    const yaw = this.lookNow.x * 0.28, pitch = this.lookNow.y * 0.22;          // +x rotation turns the face down: look y > 0 is below the mascot
     if (['idle_happy', 'hosts_speaking', 'thinking_ponder', 'timer_pocket_watch'].includes(this.state)) {     // natural blink
       let sy = 1;
       if (this.blinkT > 0) { this.blinkT = Math.max(0, this.blinkT - dt); sy = Math.max(0.14, 1 - 0.88 * Math.sin((this.blinkT / 0.16) * Math.PI)); }
@@ -140,7 +142,7 @@ class MascotController {
     const c = new MascotController(box, 'models/mascot/');
     await c.load();
     document.body.classList.add('mascot3d-on');                      // hides the flat face
-    window.Mascot3D = { setState: k => c.setState(k), updateTimer: (s, t) => c.updateTimer(s, t), lookAt: (x, y) => c.lookAt(x, y), get state() { return c.state; } };
+    window.Mascot3D = { setState: k => c.setState(k), restart: () => c.restart(), updateTimer: (s, t) => c.updateTimer(s, t), lookAt: (x, y) => c.lookAt(x, y), get state() { return c.state; } };
     window.dispatchEvent(new Event('mascot3d-ready'));
   } catch (e) { console.warn('[mascot3d] staying with the flat face:', (e && e.message) || e); }
 })();
