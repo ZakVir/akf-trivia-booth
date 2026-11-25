@@ -221,7 +221,11 @@ const Buzz = (() => {
     // live camera: end the clip at the newest frame that has a picture (no pictures are saved while a replay plays,
     // so right after one the newest seconds are markers only); practice mode has no pictures at all
     let end = now;
-    if (rec.some(f => f.blob)) { let i = rec.length - 1; while (i >= 0 && !rec[i].blob) i--; end = rec[i].t; if (now - end > 10000) return; }
+    // (only while the camera is what is being recorded: in Practice mode the newest frames are marker-only on purpose)
+    if (rec[rec.length - 1].vw) {
+      let i = rec.length - 1; while (i >= 0 && rec[i].vw && !rec[i].blob) i--;
+      if (i >= 0 && rec[i].blob) { end = rec[i].t; if (now - end > 10000) return; }   // stop at a practice frame: never jump back across a mode switch
+    }
     let frames = framesBetween(end - 4500, end);
     if (frames.length < 2) return;
     const my = ++replayToken; building = true;
