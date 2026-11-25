@@ -145,7 +145,10 @@
     var isolated = typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated === true;
     var cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
     ort.env.wasm.numThreads = opts.threads || (isolated ? Math.max(1, Math.min(4, cores - 1)) : 1);
-    ort.env.wasm.proxy = false;
+    // the YOLO loader decides once per page whether onnxruntime runs in its worker (no WebGPU) and sets root.__ortProxy
+    var proxied = !isNode && root.__ortProxy === true;
+    ort.env.wasm.proxy = proxied;
+    if (proxied) providers = providers.filter(function (x) { return x !== 'webgpu'; });
 
     var bytes = opts.modelBytes;
     if (!bytes) {
@@ -162,6 +165,7 @@
     var inputData = new Float32Array(maxBatch * PIX);
     var tensors = {};
     function tensorFor(n) {
+      if (proxied) return new ort.Tensor('float32', inputData.slice(0, n * PIX), [n, 3, H, W]);   // the worker detaches what it is sent
       return tensors[n] || (tensors[n] = new ort.Tensor('float32', inputData.subarray(0, n * PIX), [n, 3, H, W]));
     }
 
