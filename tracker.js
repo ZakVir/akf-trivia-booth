@@ -35,7 +35,7 @@ function oneEuro(st, x, dt) {
 class Tracker {
   constructor() { this.tracks = []; this.cands = []; this.cool = {}; this.events = []; this.lost = []; this.close = {}; this.nid = 0; }
   drain() { const e = this.events; this.events = []; return e; }
-  drainSwaps() { const q = this.swapQ || []; this.swapQ = []; return q; }       // [colorA, colorB] pairs whose identities were exchanged
+  drainSwaps() { const q = this.swapQ || []; this.swapQ = []; return q; }       // [colorA, colorB] identities exchanged, or [temp, restored, 'restore']
 
   freeColor(now) {
     const used = new Set(this.tracks.map(t => t.color));
@@ -182,7 +182,7 @@ class Tracker {
       const used = new Set(this.tracks.map(c => c.color));
       const l = this.lost.filter(l => l.emb && !used.has(l.color) && dist(l.emb, it.emb) < 0.3 && now - l.at < 20000)[0];
       if (l && same > 0.5) {                                              // looks like someone who left earlier
-        if (++t.mis >= 3) { (this.swapQ = this.swapQ || []).push([t.color, l.color]); this.cool[t.color] = now; t.color = l.color; t.emb = Float32Array.from(it.emb); t.mis = 0; this.lost.splice(this.lost.indexOf(l), 1); }
+        if (++t.mis >= 3) { (this.swapQ = this.swapQ || []).push([t.color, l.color, 'restore']); this.cool[t.color] = now; t.color = l.color; t.emb = Float32Array.from(it.emb); t.mis = 0; this.lost.splice(this.lost.indexOf(l), 1); }   // restore is one-way: the temporary colour goes away
       } else t.mis = 0;
     }
   }

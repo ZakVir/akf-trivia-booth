@@ -33,7 +33,8 @@ const Buzz = (() => {
   }
   function setHint(on) { $('buzzHint').style.display = on ? 'block' : 'none'; }
   function unlock() {
-    locked = false; pend = []; clearTimeout(pendTimer); pendTimer = null; replayToken++; stop(); lastSrc = null;
+    locked = false; pend = []; clearTimeout(pendTimer); pendTimer = null; replayToken++; stop();
+    lastSrc = null; disposeClip(lastClip); lastClip = null;               // a new round never replays the previous call (it would name the old winner)
     if (orderList.length) { orderList = []; post({ type: 'order', list: [] }); }
     try { Cam.tracker.tracks.forEach(t => { t.order = 0; }); } catch (e) {}
   }
@@ -115,10 +116,17 @@ const Buzz = (() => {
       pendTimer = setTimeout(resolve, delay);
     }
   }
-  function swapColors(a, b) {                   // re-ID swapped two identities: move the hands-up order with them
+  function swapColors(a, b, kind) {             // re-ID swapped two identities: move the hands-up order with them
     let ch = false;
-    for (const o of orderList) { if (o.color === a) { o.color = b; ch = true; } else if (o.color === b) { o.color = a; ch = true; } }
-    for (const p of pend) { if (p.color === a) p.color = b; else if (p.color === b) p.color = a; }
+    if (kind === 'restore') {                   // someone came back and got their old colour b back from temporary colour a (one-way)
+      const had = orderList.some(o => o.color === b);
+      if (had) { const n = orderList.length; orderList = orderList.filter(o => o.color !== a); ch = orderList.length !== n; if (ch) orderList.forEach((o, i) => { o.rank = i + 1; }); }   // they keep their earlier place
+      else for (const o of orderList) if (o.color === a) { o.color = b; ch = true; }                  // the raise made under the temporary colour is theirs
+      pend = pend.filter(p => !(p.color === a && pend.some(q => q.color === b))); for (const p of pend) if (p.color === a) p.color = b;
+    } else {
+      for (const o of orderList) { if (o.color === a) { o.color = b; ch = true; } else if (o.color === b) { o.color = a; ch = true; } }
+      for (const p of pend) { if (p.color === a) p.color = b; else if (p.color === b) p.color = a; }
+    }
     if (ch) { syncOrders(); orderMsg(); }
   }
   function reopen() {                           // "wrong answer": the first hand is out, anyone still holding a hand up gets queued again
@@ -138,14 +146,16 @@ const Buzz = (() => {
     locked = true;
     const first = list[0], margin = list[1] ? list[1].at - first.at : null;
     const info = { type: 'buzz', winner: first.color, list: list.map(l => ({ color: l.color, ms: Math.round(l.at - first.at) })), contested: list.length > 1, margin: margin == null ? null : Math.round(margin), tooClose: margin != null && margin < CLOSE_MS };
-    post(info); setHint(false);
+    let frames = [];
     if (info.contested) {                       // replay only for a real close call
       const last = list[list.length - 1], now = performance.now();
       // only footage that really shows these hands rising: never stale or substitute pictures (e.g. after 'wrong answer' re-queues old hands)
       const fresh = !list.every(l => l.again) && rec.length && rec[0].t <= first.at - 200;
-      const frames = fresh ? framesBetween(first.at - LEAD_MS - 50, Math.min(now, last.at + 900)) : [];
-      if (frames.length >= 2) { startReplay(frames, list, info); return; }
+      frames = fresh ? framesBetween(first.at - LEAD_MS - 50, Math.min(now, last.at + 900)) : [];
     }
+    info.replay = frames.length >= 2;           // the host only offers 'Replay again' when this call has its own replay
+    post(info); setHint(false);
+    if (info.replay) { startReplay(frames, list, info); return; }
     banner(first.color, info.contested ? 'first (no replay pictures yet)' : 'first hand up!');
     fx(first.color);
   }
@@ -208,13 +218,17 @@ const Buzz = (() => {
     if (building) return;
     const now = performance.now();
     if (rec.length < 2 || now - rec[rec.length - 1].t > 10000) return;      // nothing recent (never replay stale footage)
-    let frames = framesBetween(now - 4500, now);
+    // live camera: end the clip at the newest frame that has a picture (no pictures are saved while a replay plays,
+    // so right after one the newest seconds are markers only); practice mode has no pictures at all
+    let end = now;
+    if (rec.some(f => f.blob)) { let i = rec.length - 1; while (i >= 0 && !rec[i].blob) i--; end = rec[i].t; if (now - end > 10000) return; }
+    let frames = framesBetween(end - 4500, end);
     if (frames.length < 2) return;
     const my = ++replayToken; building = true;
     if (!play) { disposeClip(lastClip); lastClip = null; }
-    const list = orderList.map(o => ({ color: o.color, at: o.at })), info = { winner: orderList[0] ? orderList[0].color : null }, passes = [{ from: frames[0].t - now, to: 0, speed: 0.55 }];
-    lastSrc = { frames, list, info, first: now, passes, manual: true };
-    let clip; try { clip = await buildClip(frames, list, info, now, passes, true); } finally { building = false; }
+    const list = orderList.map(o => ({ color: o.color, at: o.at })), info = { winner: orderList[0] ? orderList[0].color : null }, passes = [{ from: frames[0].t - end, to: 0, speed: 0.55 }];
+    lastSrc = { frames, list, info, first: end, passes, manual: true };
+    let clip; try { clip = await buildClip(frames, list, info, end, passes, true); } finally { building = false; }
     if (my !== replayToken) { disposeClip(clip); return; }
     disposeClip(lastClip); lastClip = clip;
     runClip();
