@@ -158,7 +158,7 @@ function renderBuzz() {
 $('buzzCard').onclick = e => {
   const b = e.target.closest('button'); if (!b) return;
   if (b.dataset.act === 'award') { const t = b.dataset.t; score(t, 1); buzz = null; orderList = []; CH.postMessage({ type: 'buzz-clear' }); commit(); }
-  else if (b.dataset.act === 'reopen') { buzz = null; orderList = []; CH.postMessage({ type: 'buzz-reopen' }); renderBuzz(); }
+  else if (b.dataset.act === 'reopen') { buzz = null; orderList = []; CH.postMessage({ type: 'buzz-reopen', wrong: true }); renderBuzz(); }   // wrong: the mascot shakes its head
   else if (b.dataset.act === 'replay') CH.postMessage({ type: 'replay-again' });
   else if (b.dataset.act === 'skip') CH.postMessage({ type: 'replay-skip' });
 };

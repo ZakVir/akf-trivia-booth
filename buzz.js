@@ -100,6 +100,7 @@ const Buzz = (() => {
     for (const e of evs) {                      // everyone who raises a hand gets the next number
       if (orderList.some(o => o.color === e.color)) continue;
       orderList.push({ color: e.color, rank: orderList.length + 1, at: e.at });
+      if (window.mascotHand) window.mascotHand(e.color);                    // the mascot reacts to every new raised hand
       changed = true;
       if (armed && !locked && !play && !pend.some(p => p.color === e.color)) { pend.push(e); joined = true; }
     }

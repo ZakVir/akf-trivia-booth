@@ -25,6 +25,8 @@ Commit, push, review and merge on your own. Never wait for approval to push or m
      comments (`gh api repos/ZakVir/akf-trivia-booth/pulls/<n>/comments`), verify each against the code, fix the real ones
      as new commits, reply briefly on threads you decided not to act on. Don't wait more than ~15 minutes: if it has not
      finished, merge and schedule a check-in to handle its comments in a follow-up PR.
+     Devin only reviews when a PR is opened (not later pushes): check the Devin status on the exact head you merge;
+     follow-up commits get your own review (tests + browser check) only.
 6. **Merge it yourself** with a **merge commit** (not squash, not rebase), so `main` keeps every small commit *and* one merge
    commit per task: `git log --first-parent main` reads as one line per feature, `git log main` shows every step.
    - If the PR is a draft: `gh api -X POST repos/ZakVir/akf-trivia-booth/pulls/<n>/ccr/ready_for_review`

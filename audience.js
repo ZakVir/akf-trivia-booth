@@ -46,6 +46,8 @@ function stagePos(el) {
 function handleEvent(ev) {
   if (!ev || ev.id === lastEventId) return;
   lastEventId = ev.id;
+  if (ev.type === 'win') mascotDir.event(ev.streak >= 3 ? 'winner' : 'correct', performance.now());       // point given (3 in a row: crown)
+  else if (ev.type === 'oops') mascotDir.event('wrong', performance.now());                               // nobody got it
   if (ev.type === 'win' || ev.type === 'test') {
     const st = cardStyle(ev.team), card = document.querySelector(`.card[data-team="${ev.team}"]`);
     const pos = card ? stagePos(card.querySelector('.ring')) : { x: 1431, y: 880 };
@@ -53,6 +55,24 @@ function handleEvent(ev) {
     setTimeout(() => Confetti.burst(485, 560, [st.ring, '#FB5D46', '#02A5A7', '#FAB603'], 70), 250);
   }
 }
+
+/* ---- 3D mascot: the director picks the state from the game, mascot3d.mjs draws it (flat face if 3D is unavailable) ---- */
+const mascotDir = new MascotDirector();
+setInterval(() => {
+  const M = window.Mascot3D; if (!M) return;
+  const d = mascotDir.decide(S, performance.now());
+  M.lookAt(d.look[0], d.look[1]);
+  if (d.timer) M.updateTimer(d.timer[0], d.timer[1]); else M.setState(d.state);
+}, 120);
+window.mascotHand = color => {                                             // buzz.js: someone raised a hand -> alert, looking at them
+  let look = [0, 0];
+  try {
+    const t = Cam.tracker.tracks.find(x => x.color === color), mir = Cam.cfg().mirror !== false;
+    if (t) { const sx = 973 + (mir ? 1 - t.x : t.x) * 917, sy = 35 + t.y * 493; look = [(sx - 960) / 960, (sy - 70) / 540]; }   // from the tab (top centre) to the player on the live feed
+  } catch (e) {}
+  mascotDir.event('hand', performance.now(), { look });
+};
+CH.addEventListener('message', e => { if (e.data && e.data.type === 'buzz-reopen' && e.data.wrong) mascotDir.event('wrong', performance.now()); });   // host: 'Wrong -> reopen'
 
 /* ---- render ---- */
 function render() {
