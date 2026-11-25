@@ -50,7 +50,7 @@ const Cam = (() => {
     if (!cfg.on) { phase = 'off'; report(); return; }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { phase = 'error'; err = 'This browser has no camera API (open over http://localhost, not a file).'; report(); return; }
     phase = 'asking'; err = ''; report();
-    const c = { video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60, max: 120 } }, audio: false };
+    const c = { video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60, max: 120 } }, audio: false };   // 720p: the booth never shows more, and every frame is cheaper to detect and record
     const want = autoDevice || cfg.deviceId;                                      // an automatic re-pick (e.g. saved camera found under a new id) wins over the stale saved id
     if (want && !fallbackTried) c.video.deviceId = { exact: want };
     let got;
@@ -327,7 +327,7 @@ const Cam = (() => {
     const nt = performance.now();
     if (nt - detT > 1000) { det.hz = detCount * 1000 / (nt - detT); detCount = 0; detT = nt; }
     // adaptive: if inference is slow, back off so the laptop stays cool and the game stays smooth
-    const wait = Math.max(8, interval - (performance.now() - now)) + (det.ms > interval * 1.5 ? det.ms * 0.4 : 0);   // only back off when clearly too slow
+    const wait = Math.max(8, interval - (performance.now() - now)) + (det.ms > interval * 1.5 ? det.ms * 0.15 : 0);   // a slow detector gets only a small breather (a big one cut a 170 ms detector to ~4/s)
     setTimeout(detectLoop, wait);
   }
 
