@@ -89,7 +89,7 @@ body.sim-on #video { display: none; }
 /* ---------- right bottom: scores ---------- */
 #scoreP { left: 973px; top: 553px; width: 917px; height: 491px; }
 #podTab { left: 973px; top: 553px; width: 229px; height: 224px; background: var(--d-tab); border-radius: 44px 0 34px 0; z-index: 1; }
-#podTab svg { display: block; }
+#podTab canvas { display: block; width: 229px; height: 224px; }
 #cards { left: 973px; top: 802px; width: 917px; height: 215px; display: flex; justify-content: center; gap: 34px; z-index: 1; transform-origin: center center; }
 .card { flex: none; width: 161px; height: 215px; border-radius: 22px; background: var(--bg); position: relative; }
 .card .ring { position: absolute; left: 28px; top: 30px; width: 104px; height: 104px; border-radius: 50%; border: 10px solid var(--ring);
