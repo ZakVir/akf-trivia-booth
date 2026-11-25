@@ -135,18 +135,24 @@ const Cam = (() => {
         let y = await mk(cached === 'wasm' ? ['wasm'] : ['webgpu', 'wasm']);
         // First run on this Mac: WebGPU is not always the fastest (multi-threaded wasm can win), so measure both and keep the quicker one.
         if (!cached && y.provider === 'webgpu') {
-          let t1 = Infinity;
+          let t1 = Infinity, win = '';
           try { t1 = await benchYolo(y); det.bench = `webgpu ${Math.round(t1)} ms`; } catch (e1) { det.bench = 'webgpu failed: ' + ((e1 && e1.message) || e1); }
           if (t1 > 90) {
             let w = null;
             try {
               w = await mk(['wasm']); const t2 = await benchYolo(w); det.bench += `, wasm ${Math.round(t2)} ms`;
-              if (t2 < t1 * 0.9) { const old = y; y = w; w = null; try { old.dispose && old.dispose(); } catch (e3) {} }
+              if (t2 < t1 * 0.9) {
+                // the CPU is quicker here, but in this page it would run on the main thread and freeze the host: remember it, and
+                // from the next launch it runs in onnxruntime's worker (see yolo-pose.js). Now: WebGPU, or the CPU only if WebGPU cannot run at all.
+                win = 'wasm';
+                if (t1 === Infinity) { const old = y; y = w; w = null; try { old.dispose && old.dispose(); } catch (e3) {} }
+                else det.bench += ' (CPU in a worker from the next launch)';
+              }
             } catch (e2) { det.bench += ', wasm failed'; }
             if (w) { try { w.dispose && w.dispose(); } catch (e3) {} }
             if (t1 === Infinity && y.provider === 'webgpu') throw new Error(det.bench);   // neither provider could run a detection
           }
-          try { localStorage.setItem(cacheKey, y.provider); } catch (e) {}
+          try { localStorage.setItem(cacheKey, win || y.provider); } catch (e) {}
         }
         det.provErr = (y.providerErrors && y.providerErrors.length) ? y.providerErrors.join(' | ') : '';
         if (gen !== detGen) { try { y.dispose && y.dispose(); } catch (e2) {} det.yoloNote = 'YOLO load discarded: settings changed while it loaded'; loading = false; return; }   // settings changed while loading

@@ -134,6 +134,22 @@
     return [src.naturalWidth || src.displayWidth || src.width, src.naturalHeight || src.displayHeight || src.height];
   }
 
+  // Without a working WebGPU, inference runs on the CPU (wasm). In the page that blocks the main thread for ~100 ms a
+  // frame, which made the whole host page (one window: the live view is an iframe in it) freeze. So wasm runs in
+  // onnxruntime's worker (env.wasm.proxy) unless a WebGPU adapter exists. The env is set once per page (first create wins).
+  // A first request for wasm only (cam.js saved that the CPU is quicker on this machine) also means the worker, so the
+  // whole page then stays on the CPU worker (re-ID included); a reload decides again.
+  async function wantProxy(ort, providers, isNode) {
+    if (isNode || typeof Worker === 'undefined') return false;
+    if (root.__ortProxy != null) return root.__ortProxy;
+    var gpu = false;
+    if (providers.indexOf('webgpu') >= 0 && typeof navigator !== 'undefined' && navigator.gpu) {
+      try { gpu = !!(await Promise.race([navigator.gpu.requestAdapter(), new Promise(function (r) { setTimeout(function () { r(null); }, 3000); })])); } catch (e) { gpu = false; }
+    }
+    root.__ortProxy = !gpu;
+    return root.__ortProxy;
+  }
+
   // one model load at a time (onnxruntime-web throws "Session already started" when two creates overlap)
   async function create(opts) {
     var prev = root.__ortCreateLock || Promise.resolve(), release;
@@ -165,7 +181,9 @@
     var isolated = typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated === true;
     var cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
     ort.env.wasm.numThreads = opts.threads || (isolated ? Math.max(1, Math.min(4, cores - 1)) : 1);
-    ort.env.wasm.proxy = false;
+    var proxied = await wantProxy(ort, providers, isNode);
+    ort.env.wasm.proxy = proxied;
+    if (proxied) providers = providers.filter(function (x) { return x !== 'webgpu'; });   // the worker runs wasm only
 
     // model bytes
     var bytes = opts.modelBytes;
@@ -182,6 +200,8 @@
     var inputData = new Float32Array(3 * S * S);
     inputData.fill(114 / 255);
     var inputTensor = new ort.Tensor('float32', inputData, [1, 3, S, S]);
+    // the worker takes ownership of what it is sent (the buffer is detached), so it always gets a fresh copy
+    function feed() { return proxied ? new ort.Tensor('float32', inputData.slice(), [1, 3, S, S]) : inputTensor; }
 
     var session = null, provider = null, errors = [];
     var busyTries = 0;   // ORT builds one session at a time: "Session already started" means an earlier (failed/slow) create is still finishing, so wait and retry
@@ -193,7 +213,7 @@
         var tmo, guard = new Promise(function (_, rej) { tmo = setTimeout(function () { rej(new Error('timed out after 20 s')); }, 20000); });
         var s, inner = (async function () {
           var s0 = await ort.InferenceSession.create(bytes, { executionProviders: [p], graphOptimizationLevel: 'all' });
-          try { await s0.run({ [s0.inputNames[0]]: inputTensor }); }   // warm-up; WebGPU often fails here
+          try { await s0.run({ [s0.inputNames[0]]: feed() }); }   // warm-up; WebGPU often fails here
           catch (we) { try { s0.release(); } catch (e2) {} throw we; }
           return s0;
         })();
@@ -220,13 +240,13 @@
     }
 
     var chain = Promise.resolve();
-    var det = { provider: provider, lastMs: 0, model: model, threads: provider === 'wasm' ? ort.env.wasm.numThreads : 0,
+    var det = { provider: provider, proxied: proxied && provider === 'wasm', lastMs: 0, model: model, threads: provider === 'wasm' ? ort.env.wasm.numThreads : 0,
                 providerErrors: errors, scoreThr: scoreThr, maxPeople: maxPeople };
 
     // run the session on whatever is currently in inputTensor, decode with letterbox `lb`
     async function infer(lb) {
       var t0 = (typeof performance !== 'undefined' ? performance : Date).now();
-      var res = await session.run({ [inName]: inputTensor });
+      var res = await session.run({ [inName]: feed() });
       var o = res[session.outputNames[0]];
       det.lastMs = (typeof performance !== 'undefined' ? performance : Date).now() - t0;
       var people = decode(o.data, o.dims, lb, det.scoreThr, det.maxPeople);
