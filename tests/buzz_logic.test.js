@@ -99,6 +99,23 @@ const arm = (q = 0, step = 0, buzzer = true) => Buzz.arm({ qId: q, step, cam: { 
   emit({ type: 'replay-last' }); await sleep(600);
   ok(types('replay-play').length === 1, 'Replay key plays the last seconds when footage is fresh');
   emit({ type: 'replay-skip' }); await sleep(100);
+  // 7b) Practice right after live camera: R replays the practice frames only (never the old camera pictures)
+  {
+    const R = Buzz._rec, t = performance.now(); R.length = 0;
+    for (let i = 0; i < 60; i++) R.push({ t: t - 4000 + i * 33, blob: { size: 1 }, tracks: [], vw: 640, vh: 360 });   // 2 s of camera frames with pictures
+    for (let i = 0; i < 60; i++) R.push({ t: t - 2000 + i * 33, blob: null, tracks: [], vw: 0, vh: 0 });                // then 2 s of Practice
+    let bitmaps = 0; const cib = ctx.createImageBitmap; ctx.createImageBitmap = async b => { bitmaps++; return { close() {} }; };
+    clear(); emit({ type: 'replay-last' }); await sleep(600);
+    ok(types('replay-play').length === 1 && bitmaps === 0, 'Practice right after the camera: R replays the practice frames, not old camera pictures');
+    emit({ type: 'replay-skip' }); await sleep(100);
+    // and the other way round: camera after Practice, newest seconds without pictures (a replay was playing) -> camera pictures
+    R.length = 0;
+    for (let i = 0; i < 60; i++) R.push({ t: t - 4000 + i * 33, blob: null, tracks: [], vw: 0, vh: 0 });
+    for (let i = 0; i < 60; i++) R.push({ t: t - 2000 + i * 33, blob: i < 30 ? { size: 1 } : null, tracks: [], vw: 640, vh: 360 });
+    bitmaps = 0; clear(); emit({ type: 'replay-last' }); await sleep(600);
+    ok(types('replay-play').length === 1 && bitmaps > 0 && bitmaps <= 30, 'camera after Practice: R uses this camera stretch\'s pictures only');
+    ctx.createImageBitmap = cib; emit({ type: 'replay-skip' }); await sleep(100);
+  }
   // 8) hands-up mode off must not stop recording (Replay still works)
   arm(0, 0, false); await sleep(300); clear(); emit({ type: 'replay-last' }); await sleep(600);
   ok(types('replay-play').length === 1, 'Replay key works even with hands-up mode switched off');

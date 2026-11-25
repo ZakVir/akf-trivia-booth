@@ -218,11 +218,19 @@ const Buzz = (() => {
     if (building) return;
     const now = performance.now();
     if (rec.length < 2 || now - rec[rec.length - 1].t > 10000) return;      // nothing recent (never replay stale footage)
-    // live camera: end the clip at the newest frame that has a picture (no pictures are saved while a replay plays,
-    // so right after one the newest seconds are markers only); practice mode has no pictures at all
+    // only the newest uninterrupted stretch of ONE mode (live camera or Practice): never mix in frames from before a switch
+    const camMode = !!rec[rec.length - 1].vw;
+    let s0 = rec.length - 1; while (s0 > 0 && !!rec[s0 - 1].vw === camMode) s0--;
+    const seg = rec.slice(s0);
+    // live camera: end at the newest frame that has a picture (no pictures are saved while a replay plays, so right after
+    // one the newest seconds are markers only); Practice mode has no pictures at all and ends now
     let end = now;
-    if (rec.some(f => f.blob)) { let i = rec.length - 1; while (i >= 0 && !rec[i].blob) i--; end = rec[i].t; if (now - end > 10000) return; }
-    let frames = framesBetween(end - 4500, end);
+    if (camMode) {
+      let i = seg.length - 1; while (i >= 0 && !seg[i].blob) i--;
+      if (i < 0) return;                                                       // no picture yet in this camera stretch
+      end = seg[i].t; if (now - end > 10000) return;
+    }
+    let frames = seg.filter(f => f.t >= end - 4500 && f.t <= end);
     if (frames.length < 2) return;
     const my = ++replayToken; building = true;
     if (!play) { disposeClip(lastClip); lastClip = null; }
@@ -384,6 +392,6 @@ const Buzz = (() => {
     }
   });
 
-  return { arm, capture, raise, stats, swapColors };
+  return { arm, capture, raise, stats, swapColors, _rec: rec };           // _rec: the recorder buffer, for tests only
 })();
 window.Buzz = Buzz;
