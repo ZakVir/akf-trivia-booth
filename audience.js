@@ -12,18 +12,6 @@ function fit() {
 }
 addEventListener('resize', fit); fit();
 
-/* ---- snow ---- */
-(() => {
-  const el = $('snow');
-  for (let i = 0; i < 46; i++) {
-    const f = document.createElement('i');
-    const sz = 6 + Math.random() * 14;
-    f.style.cssText = `left:${Math.random() * 100}%;width:${sz}px;height:${sz}px;--dx:${(Math.random() * 120 - 60) | 0}px;` +
-      `animation-duration:${9 + Math.random() * 12}s;animation-delay:${-Math.random() * 20}s;opacity:${.4 + Math.random() * .6}`;
-    el.appendChild(f);
-  }
-})();
-
 /* ---- tiny confetti (no libraries, works offline) ---- */
 const Confetti = (() => {
   const cv = $('confetti'), ctx = cv.getContext('2d');
@@ -55,39 +43,15 @@ function stagePos(el) {
   return { x: (r.left + r.width / 2 - s.left) / k, y: (r.top + r.height / 2 - s.top) / k };
 }
 
-/* ---- mascot ---- */
-const BUBBLES = {
-  idle: 'Ready? Step in!', look: 'Listen up!', think: 'Huddle with your team!',
-  happy: 'Yes! Great job!', cool: "You're on fire!", oops: 'Ooh, so close!', fact: 'Did you know?'
-};
-function baseMood() {
-  if (!S) return 'idle';
-  if (S.step >= 2) return 'fact';
-  if (S.timer.running) return 'think';
-  if (S.step === 0 && S.qId != null) return 'look';
-  return 'idle';
-}
-function renderMascot() {
-  if (transient && Date.now() > transient.until) transient = null;
-  const m = transient ? transient.mood : baseMood();
-  Mascot.render($('mascot'), m);
-  $('bubble').textContent = BUBBLES[m];
-}
-
 function handleEvent(ev) {
   if (!ev || ev.id === lastEventId) return;
   lastEventId = ev.id;
   if (ev.type === 'win' || ev.type === 'test') {
-    const t = TEAMS[ev.team] || TEAMS.gold, bar = document.querySelector(`.bar[data-team="${ev.team}"]`);
-    const pos = bar ? stagePos(bar.querySelector('.track')) : { x: 600, y: 850 };
-    Confetti.burst(pos.x, pos.y, [t.color, '#F2B01E', '#FFFFFF', '#6FAFCB']);
-    setTimeout(() => Confetti.burst(960, 760, [t.color, '#F2B01E', '#6FAFCB', '#E5484D'], 70), 250);
-    transient = { mood: ev.streak >= 3 ? 'cool' : 'happy', until: Date.now() + 3600 };
-  } else if (ev.type === 'oops') {
-    transient = { mood: 'oops', until: Date.now() + 3200 };
+    const st = cardStyle(ev.team), card = document.querySelector(`.card[data-team="${ev.team}"]`);
+    const pos = card ? stagePos(card.querySelector('.ring')) : { x: 1431, y: 880 };
+    Confetti.burst(pos.x, pos.y, [st.ring, '#FAB603', '#FFFFFF', '#0879FE']);
+    setTimeout(() => Confetti.burst(485, 560, [st.ring, '#FB5D46', '#02A5A7', '#FAB603'], 70), 250);
   }
-  renderMascot();
-  setTimeout(renderMascot, 3700);
 }
 
 /* ---- render ---- */
@@ -98,9 +62,9 @@ function render() {
   document.body.classList.toggle('sim-on', !!(S.cam && S.cam.sim));
   Cam.apply(S.cam);
   Buzz.arm(S);
+  document.body.classList.toggle('timer-on', !!(S.timer && (S.timer.running || S.timer.left < S.timer.total)));
   renderQuestion();
-  renderBars();
-  renderMascot();
+  renderCards();
 }
 
 function renderQuestion() {
@@ -110,12 +74,12 @@ function renderQuestion() {
   if (key === qKey) return;
   qKey = key;
   $('qnum').textContent = `Question ${S.qId + 1} of ${QUESTIONS.length}`;
-  const lv = $('level'); lv.textContent = LEVELS[q.level] || 'Everyone';
-  const free = qType(q);
-  let html = `<div id="emoji">${esc(q.emoji || '❓')}</div><div id="qtext">${esc(q.q)}</div>`;
-  if (free === 'free') {
+  $('level').textContent = LEVELS[q.level] || 'Everyone';
+  const qt = $('qtext'); qt.textContent = (q.emoji ? q.emoji + ' ' : '') + q.q; fitText(qt, 64, 34);
+  let html = '';
+  if (qType(q) === 'free') {
     if (S.step === 0) html += `<div class="free"><big>🎤</big>Shout it out!<br>Say your answer</div>`;
-    else html += `<div class="free ans"><big>✅</big>${q.answerText ? esc(q.answerText) : 'Great answers, everyone!'}</div>`;
+    else html += `<div class="free ans">✅ ${q.answerText ? esc(q.answerText) : 'Great answers, everyone!'}</div>`;
     if (S.step >= 2) html += factHtml(q);
   } else if (S.step >= 2) {
     html += `<div id="choices"><div class="choice right"><b>${LETTERS[q.answer]}</b>${esc(q.choices[q.answer])}</div></div>` + factHtml(q);
@@ -123,34 +87,43 @@ function renderQuestion() {
     html += '<div id="choices">' + q.choices.map((c, i) =>
       `<div class="choice ${S.step === 1 ? (i === q.answer ? 'right' : 'dim') : ''}"><b>${LETTERS[i]}</b>${esc(c)}</div>`).join('') + '</div>';
   }
-  $('body').innerHTML = html;
+  const body = $('body'); body.innerHTML = html;
+  const ch = body.querySelectorAll('.choice');                            // long answers: shrink them all together so they still fit the box
+  for (let fs = 34; fs > 20 && body.scrollHeight > body.clientHeight + 1; fs -= 2) ch.forEach(c => { c.style.fontSize = fs + 'px'; c.style.minHeight = Math.round(fs * 2.4) + 'px'; });
+}
+function fitText(el, max, min) {                                          // biggest size that fits the box
+  let fs = max; el.style.fontSize = fs + 'px';
+  while (fs > min && (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1)) { fs -= 2; el.style.fontSize = fs + 'px'; }
 }
 function factHtml(q) {
   const f = S.kid ? (q.kidFact || q.fact) : (q.fact || q.kidFact);
   return f ? `<div id="fact"><h3>💡 Did you know?</h3><p>${esc(f)}</p></div>` : '';
 }
 
-function renderBars() {
+/* card colors from the design (Yellow / Green / Red / Blue); the other wristband colors follow the same style */
+const CARD = {
+  gold: { bg: '#FFFFD4', ring: '#FECD08', name: 'Yellow' }, green: { bg: '#E2FFD4', ring: '#57FE08' }, red: { bg: '#FFD4D4', ring: '#FE0808' },
+  blue: { bg: '#D4F2FF', ring: '#0879FE' }, orange: { bg: '#FFE4D0', ring: '#FE7A08' }, teal: { bg: '#D4FAF5', ring: '#08C9B4' },
+  purple: { bg: '#EADDFF', ring: '#8A3DFE' }, pink: { bg: '#FFDAEE', ring: '#FE3D9E' }
+};
+const CARD_ORDER = ['gold', 'green', 'red', 'blue', 'orange', 'teal', 'purple', 'pink'];
+const cardStyle = t => CARD[t] || { bg: '#F0F0F0', ring: (TEAMS[t] || {}).color || '#999' };
+function renderCards() {
   const board = S.board || [];
-  const key = board.join(',');
-  const wrap = $('bars');
-  wrap.classList.toggle('many', board.length > 4);
+  const teams = (board.length ? CARD_ORDER.filter(t => board.includes(t)) : ['gold', 'green', 'red', 'blue']);   // nobody in view yet: the four teams, as in the design
+  const key = teams.join(','), wrap = $('cards');
   if (key !== barsKey) {
     barsKey = key;
-    wrap.innerHTML = board.length ? board.map(t =>
-      `<div class="bar" data-team="${t}" style="--c:${TEAMS[t].color}"><div class="lbl"><i></i>${TEAMS[t].name}</div>` +
-      `<div class="track"><div class="fill"></div></div><div class="num">0</div></div>`).join('')
-      : '<div id="emptyBars">Step in front of the camera to join!</div>';
+    wrap.innerHTML = teams.map(t => { const c = cardStyle(t); return `<div class="card" data-team="${t}" style="--bg:${c.bg};--ring:${c.ring}"><div class="ring"><b>0</b><span>points</span></div><div class="nm">${c.name || TEAMS[t].name} Team</div></div>`; }).join('');
+    const k = Math.min(1, 830 / (teams.length * 161 + (teams.length - 1) * 34));   // more than 4 teams: the row shrinks to fit
+    wrap.style.transform = k < 1 ? `scale(${k})` : '';
   }
-  const max = Math.max(5, ...board.map(t => S.scores[t] || 0));
-  for (const t of board) {
-    const bar = wrap.querySelector(`[data-team="${t}"]`), v = S.scores[t] || 0;
-    if (!bar) continue;
-    bar.querySelector('.fill').style.width = (v / max * 100) + '%';
-    bar.querySelector('.num').textContent = v;
-    if (prevScores[t] != null && v > prevScores[t]) {
-      bar.classList.remove('bounce'); void bar.offsetWidth; bar.classList.add('bounce');
-    }
+  for (const t of teams) {
+    const card = wrap.querySelector(`[data-team="${t}"]`), v = (S.scores && S.scores[t]) || 0;
+    if (!card) continue;
+    card.querySelector('b').textContent = v;
+    card.querySelector('span').textContent = v === 1 ? 'point' : 'points';
+    if (prevScores[t] != null && v > prevScores[t]) { card.classList.remove('bounce'); void card.offsetWidth; card.classList.add('bounce'); }
     prevScores[t] = v;
   }
 }
@@ -183,8 +156,9 @@ if (!PREVIEW) addEventListener('click', () => {
 
 /* reaction when someone buzzes in */
 window.buzzFx = function (color) {
-  const t = TEAMS[color];
-  Confetti.burst(600, 330, [t.color, '#F2B01E', '#FFFFFF', '#6FAFCB'], 120);
-  transient = { mood: 'happy', until: Date.now() + 3600 };
-  renderMascot(); setTimeout(renderMascot, 3700);
+  const c = cardStyle(color);
+  Confetti.burst(1431, 330, [c.ring, '#FAB603', '#FFFFFF', '#0879FE'], 120);
 };
+
+/* the design font loads a moment after the page: measure the question text again once it is there */
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { qKey = ''; if (S) render(); });
