@@ -412,6 +412,14 @@ test('aiParse: chunking, sequential calls, dedupe, never mid-question', async ()
   assert.ok(calls[1].messages[1].content.includes('part 2 of ' + chunks.length));
 });
 
+test('aiParse: questions sharing a stem but with different choices are both kept', async () => {
+  const items = [{ question: 'Which number is prime?', choices: ['7', '8', '9'], answer: 'A' }, { question: 'Which number is prime?', choices: ['11', '12', '15'], answer: 'A' },
+                 { question: 'Which number is prime?', choices: ['7', '8', '9'], answer: 'A' }];
+  const r = await Importer.aiParse('Which number is prime? 7 8 9\nWhich number is prime? 11 12 15', { fetchImpl: fakeFetch(JSON.stringify(items)) });
+  assert.strictEqual(r.questions.length, 2, JSON.stringify(r.questions.map(q => q.choices)));
+  assert.deepStrictEqual(r.questions[1].choices, ['11', '12', '15']);
+});
+
 // ---------------------------------------------------------------- runner
 
 (async () => {

@@ -1279,10 +1279,10 @@
       items.forEach(function (it) {
         var q = normalize(it);
         if (!q) return;
-        var key = norm(q.q);
-        if (seen[key]) return;
+        var stem = norm(q.q), key = stem + '|' + (q.choices || []).map(norm).join('|') + '|' + norm(String(q.answerText || ''));
+        if (seen[key]) return;                                              // a repeat only when stem AND choices/answer match (shared stems stay)
         seen[key] = true;
-        if (srcNorm.indexOf(key) < 0) q.warnings.push('Wording differs from your document - please check it');
+        if (srcNorm.indexOf(stem) < 0) q.warnings.push('Wording differs from your document - please check it');
         all.push(q);
       });
     }

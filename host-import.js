@@ -45,8 +45,9 @@
   /* ---------- AI first: every import is read by the AI when a key is available, the built-in reader otherwise ---------- */
   let aiHealth = null;
   async function aiReady() {
-    if ($('nimKey').value.trim()) return true;
     if (!aiHealth) { try { const r = await fetch('/api/health', { cache: 'no-store' }); aiHealth = r.ok ? await r.json() : { ok: false }; } catch (e) { aiHealth = { ok: false }; } }
+    if (!aiHealth.ok) return false;                                         // no AI service here (opened as a file, or the static mirror): built-in reader
+    if ($('nimKey').value.trim()) return true;
     return !!aiHealth.envKey && (!aiHealth.needsCode || !!$('nimCode').value.trim());   // the web version also needs the booth import code
   }
   async function showAiState() {
@@ -55,8 +56,11 @@
   }
   document.querySelector('.tab[data-tab="import"]').addEventListener('click', showAiState);
   $('openImport').addEventListener('click', showAiState);
-  async function smartRead(text, label) {
-    if (!(await aiReady())) return handleResult(Importer.parseText(text), label);
+  // fallback: what the built-in reader makes of it (a file's own parse is better than re-reading its flattened text)
+  const offline = (text, fallback) => (fallback && fallback.rawText === text) ? Object.assign({}, fallback, { warnings: (fallback.warnings || []).slice() }) : Importer.parseText(text);
+  let fileParsed = null;                                                    // the chosen file, as the built-in reader parsed it
+  async function smartRead(text, label, fallback) {
+    if (!(await aiReady())) return handleResult(offline(text, fallback), label);
     status('Reading with AI… (the text goes to NVIDIA\'s API)');
     $('impRead').disabled = $('impAI').disabled = true;
     const t0 = performance.now();
@@ -64,9 +68,9 @@
       const key = $('nimKey').value.trim();
       const r = await Importer.aiParse(text, { key: key || undefined, code: $('nimCode').value.trim() || undefined, model: $('nimModel').value.trim() || undefined });
       if (r.questions.length) await handleResult({ questions: r.questions, warnings: r.warnings || [], rawText: text }, `${label}, read by AI in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
-      else { const f = Importer.parseText(text); f.warnings = ['The AI found nothing, so the built-in reader was used.'].concat(f.warnings || []); await handleResult(f, label); }
+      else { const f = offline(text, fallback); f.warnings = ['The AI found nothing, so the built-in reader was used.'].concat(f.warnings || []); await handleResult(f, label); }
     } catch (e) {
-      const f = Importer.parseText(text); f.warnings = ['AI unavailable (' + e.message + '), so the built-in reader was used.'].concat(f.warnings || []); await handleResult(f, label);
+      const f = offline(text, fallback); f.warnings = ['AI unavailable (' + e.message + '), so the built-in reader was used.'].concat(f.warnings || []); await handleResult(f, label);
     } finally { $('impRead').disabled = $('impAI').disabled = false; }
   }
 
@@ -82,8 +86,8 @@
     readText = $('paste').value.trim();                                     // text already in the paste box is older than this file: only new edits override it
     sourceName = f.name.replace(/\.[a-z0-9]+$/i, '');
     try {
-      const r = await Importer.parseFile(f);
-      if (r.rawText && (await aiReady())) await smartRead(r.rawText, f.name);   // the AI reads the file's text in whatever layout it has
+      const r = await Importer.parseFile(f); fileParsed = r;
+      if (r.rawText && (await aiReady())) await smartRead(r.rawText, f.name, r);   // the AI reads the file's text in whatever layout it has
       else await handleResult(r, f.name);
     } catch (e) { status('Could not read that file: ' + e.message); }
   }
@@ -97,7 +101,7 @@
     if (!ready()) return;
     const t = $('paste').value.trim();
     if (!t) return status('Paste some text first, or choose a file.');
-    rawText = t; readText = t; sourceName = '';
+    rawText = t; readText = t; sourceName = ''; fileParsed = null;
     try { await smartRead(t, 'Pasted text'); } catch (e) { status('Could not read that: ' + e.message); }
   };
   $('impSample').onclick = () => { if (ready()) { $('paste').value = Importer.SAMPLE_TEXT; $('impRead').click(); } };
@@ -119,7 +123,7 @@
     const pasted = $('paste').value.trim();
     const text = (pasted && pasted !== readText) ? pasted : (rawText || pasted);   // what is on screen now wins over an earlier document
     if (!text) return status('Choose a file or paste text first.');
-    try { await handleResult(Importer.parseText(text), 'Read without AI'); } catch (e) { status('Could not read that: ' + e.message); }
+    try { await handleResult(offline(text, fileParsed), 'Read without AI'); } catch (e) { status('Could not read that: ' + e.message); }
   };
 
   /* ---------- review ---------- */
