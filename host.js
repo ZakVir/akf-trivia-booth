@@ -152,7 +152,7 @@ function renderBuzz() {
   let h = '<b>🙋 Hands up, in order:</b> ' + orderList.map(chip).join('');
   if (buzz && buzz.contested) h += `<div style="margin-top:4px">Close call between ${buzz.list.map(l => TEAMS[l.color].name).join(' and ')}.` + (buzz.tooClose ? ' <b style="color:#B42318">Too close for the camera. You decide, using the replay.</b>' : '') + '</div>';
   h += '<div class="bz">' + orderList.map(l => `<button data-act="award" data-t="${l.color}" style="--c:${TEAMS[l.color].color}">Point to ${l.rank}. ${TEAMS[l.color].name}</button>`).join('') +
-    (buzz && buzz.contested ? '<button data-act="replay">Replay again</button><button data-act="skip">Skip replay</button>' : '') + '<button data-act="reopen">Wrong → reopen buzzers</button></div>';
+    (buzz && buzz.contested && buzz.replay !== false ? '<button data-act="replay">Replay again</button><button data-act="skip">Skip replay</button>' : '') + '<button data-act="reopen">Wrong → reopen buzzers</button></div>';
   c.innerHTML = h;
 }
 $('buzzCard').onclick = e => {

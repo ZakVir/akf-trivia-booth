@@ -33,7 +33,8 @@ const Buzz = (() => {
   }
   function setHint(on) { $('buzzHint').style.display = on ? 'block' : 'none'; }
   function unlock() {
-    locked = false; pend = []; clearTimeout(pendTimer); pendTimer = null; replayToken++; stop(); lastSrc = null;
+    locked = false; pend = []; clearTimeout(pendTimer); pendTimer = null; replayToken++; stop();
+    lastSrc = null; disposeClip(lastClip); lastClip = null;               // a new round never replays the previous call (it would name the old winner)
     if (orderList.length) { orderList = []; post({ type: 'order', list: [] }); }
     try { Cam.tracker.tracks.forEach(t => { t.order = 0; }); } catch (e) {}
   }
@@ -138,14 +139,16 @@ const Buzz = (() => {
     locked = true;
     const first = list[0], margin = list[1] ? list[1].at - first.at : null;
     const info = { type: 'buzz', winner: first.color, list: list.map(l => ({ color: l.color, ms: Math.round(l.at - first.at) })), contested: list.length > 1, margin: margin == null ? null : Math.round(margin), tooClose: margin != null && margin < CLOSE_MS };
-    post(info); setHint(false);
+    let frames = [];
     if (info.contested) {                       // replay only for a real close call
       const last = list[list.length - 1], now = performance.now();
       // only footage that really shows these hands rising: never stale or substitute pictures (e.g. after 'wrong answer' re-queues old hands)
       const fresh = !list.every(l => l.again) && rec.length && rec[0].t <= first.at - 200;
-      const frames = fresh ? framesBetween(first.at - LEAD_MS - 50, Math.min(now, last.at + 900)) : [];
-      if (frames.length >= 2) { startReplay(frames, list, info); return; }
+      frames = fresh ? framesBetween(first.at - LEAD_MS - 50, Math.min(now, last.at + 900)) : [];
     }
+    info.replay = frames.length >= 2;           // the host only offers 'Replay again' when this call has its own replay
+    post(info); setHint(false);
+    if (info.replay) { startReplay(frames, list, info); return; }
     banner(first.color, info.contested ? 'first (no replay pictures yet)' : 'first hand up!');
     fx(first.color);
   }
