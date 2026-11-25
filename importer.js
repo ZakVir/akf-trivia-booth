@@ -7,7 +7,7 @@
   'use strict';
 
   var MAX_QUESTIONS = 500;
-  var DEFAULT_MODEL = 'meta/llama-3.1-8b-instruct';
+  var DEFAULT_MODEL = 'nvidia/nemotron-3.5-bolt-e4b';   // fast + accurate on messy trivia sheets (tested 2026-11); llama-3.1-8b was retired by NVIDIA
   var DEFAULT_ENDPOINT = '/api/parse';
 
   // ---------------------------------------------------------------- text helpers
@@ -1233,7 +1233,8 @@
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: 'Extract the trivia questions from this document' + (chunks.length > 1 ? ' (part ' + (ci + 1) + ' of ' + chunks.length + ')' : '') + '. Reply with ONLY the JSON array.\n\n-----\n' + chunks[ci] + '\n-----' }
         ],
-        temperature: 0, max_tokens: 4096
+        temperature: 0, max_tokens: 4096,
+        chat_template_kwargs: { enable_thinking: false }   // answer directly (thinking models otherwise spend seconds reasoning first)
       };
       var resp;
       try {

@@ -350,7 +350,7 @@ test('aiParse: clean JSON, request shape', async () => {
   assert.strictEqual(calls[0].url, '/api/parse');
   const b = calls[0].body;
   assert.strictEqual(b.key, 'nvapi-test');
-  assert.strictEqual(b.model, 'meta/llama-3.1-8b-instruct');
+  assert.strictEqual(b.model, 'nvidia/nemotron-3.5-bolt-e4b'); assert.deepStrictEqual(b.chat_template_kwargs, { enable_thinking: false });
   assert.strictEqual(b.temperature, 0);
   assert.strictEqual(b.max_tokens, 4096);
   assert.strictEqual(b.messages[0].role, 'system');
