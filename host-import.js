@@ -9,7 +9,7 @@
   $('nimKey').value = lsGet('akf-nim-key') || '';
   const savedModel = lsGet('akf-nim-model');
   $('nimModel').value = (!savedModel || /llama-3\.1-8b/.test(savedModel)) ? Importer.DEFAULT_MODEL : savedModel;   // the old default was retired by NVIDIA
-  $('nimKey').onchange = e => lsSet('akf-nim-key', e.target.value.trim());
+  $('nimKey').onchange = e => { lsSet('akf-nim-key', e.target.value.trim()); aiHealth = null; showAiState(); };
   $('nimModel').onchange = e => lsSet('akf-nim-model', e.target.value.trim());
   let readText = '', sourceName = '';                                     // the paste-box text that was last read; where the current import came from
 
@@ -40,9 +40,36 @@
   document.querySelector('.tab[data-tab="import"]').addEventListener('click', renderLibrary);
   $('openImport').addEventListener('click', renderLibrary);
 
+  /* ---------- AI first: every import is read by the AI when a key is available, the built-in reader otherwise ---------- */
+  let aiHealth = null;
+  async function aiReady() {
+    if ($('nimKey').value.trim()) return true;
+    if (!aiHealth) { try { const r = await fetch('/api/health', { cache: 'no-store' }); aiHealth = r.ok ? await r.json() : { ok: false }; } catch (e) { aiHealth = { ok: false }; } }
+    return !!aiHealth.envKey;
+  }
+  async function showAiState() {
+    $('aiState').innerHTML = (await aiReady()) ? '<b style="color:#248A3D">AI reading on</b> (NVIDIA Nemotron)' : '<span>AI reading off: add a key in AI helper settings</span>';
+  }
+  document.querySelector('.tab[data-tab="import"]').addEventListener('click', showAiState);
+  $('openImport').addEventListener('click', showAiState);
+  async function smartRead(text, label) {
+    if (!(await aiReady())) return handleResult(Importer.parseText(text), label);
+    status('Reading with AI… (the text goes to NVIDIA\'s API)');
+    $('impRead').disabled = $('impAI').disabled = true;
+    const t0 = performance.now();
+    try {
+      const key = $('nimKey').value.trim();
+      const r = await Importer.aiParse(text, { key: key || undefined, model: $('nimModel').value.trim() || undefined });
+      if (r.questions.length) await handleResult({ questions: r.questions, warnings: r.warnings || [], rawText: text }, `${label}, read by AI in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+      else { const f = Importer.parseText(text); f.warnings = ['The AI found nothing, so the built-in reader was used.'].concat(f.warnings || []); await handleResult(f, label); }
+    } catch (e) {
+      const f = Importer.parseText(text); f.warnings = ['AI unavailable (' + e.message + '), so the built-in reader was used.'].concat(f.warnings || []); await handleResult(f, label);
+    } finally { $('impRead').disabled = $('impAI').disabled = false; }
+  }
+
   async function handleResult(r, label) {
     parsed = r; rawText = r.rawText || '';                                // never keep an older document's text around
-    status(`${label}: found ${r.questions.length} question${r.questions.length === 1 ? '' : 's'}.` + ((r.warnings && r.warnings.length) ? ' ' + r.warnings.join(' ') : '') + (r.needsAI ? ' Nothing usable was found. Try “Ask AI to clean up”, or paste the text.' : ''));
+    status(`${label}: found ${r.questions.length} question${r.questions.length === 1 ? '' : 's'}.` + ((r.warnings && r.warnings.length) ? ' ' + r.warnings.join(' ') : '') + (r.needsAI ? ' Nothing usable was found. Add an NVIDIA key (AI helper settings) so the AI can read it, or paste the text.' : ''));
     renderReview();
   }
 
@@ -51,7 +78,11 @@
     status('Reading ' + f.name + '…');
     readText = $('paste').value.trim();                                     // text already in the paste box is older than this file: only new edits override it
     sourceName = f.name.replace(/\.[a-z0-9]+$/i, '');
-    try { await handleResult(await Importer.parseFile(f), f.name); } catch (e) { status('Could not read that file: ' + e.message); }
+    try {
+      const r = await Importer.parseFile(f);
+      if (r.rawText && (await aiReady())) await smartRead(r.rawText, f.name);   // the AI reads the file's text in whatever layout it has
+      else await handleResult(r, f.name);
+    } catch (e) { status('Could not read that file: ' + e.message); }
   }
   $('file').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) readFile(f); };   // cleared so the same file can be picked again after editing it
   const drop = $('drop');
@@ -63,8 +94,8 @@
     if (!ready()) return;
     const t = $('paste').value.trim();
     if (!t) return status('Paste some text first, or choose a file.');
-    rawText = t; readText = t;
-    try { await handleResult(Importer.parseText(t), 'Pasted text'); } catch (e) { status('Could not read that: ' + e.message); }
+    rawText = t; readText = t; sourceName = '';
+    try { await smartRead(t, 'Pasted text'); } catch (e) { status('Could not read that: ' + e.message); }
   };
   $('impSample').onclick = () => { if (ready()) { $('paste').value = Importer.SAMPLE_TEXT; $('impRead').click(); } };
   $('impTemplate').onclick = () => {
@@ -80,22 +111,12 @@
     status('Built-in questions restored.');
   };
 
-  $('impAI').onclick = async () => {
+  $('impAI').onclick = async () => {                                        // 'Read without AI': the built-in reader only
     if (!ready()) return;
     const pasted = $('paste').value.trim();
     const text = (pasted && pasted !== readText) ? pasted : (rawText || pasted);   // what is on screen now wins over an earlier document
-    if (!text) return status('Choose a file or paste text first (AI cleans up what you give it).');
-    const key = $('nimKey').value.trim();
-    let serverKey = false;
-    if (!key) { try { const h = await (await fetch('/api/health', { cache: 'no-store' })).json(); serverKey = !!h.envKey; } catch (e) {} }
-    if (!key && !serverKey) { status('Add a free NVIDIA key under “AI helper settings” first, or skip AI: most documents work without it.'); return; }
-    status('Asking the AI… (this sends the text to NVIDIA\'s free API)');
-    $('impAI').disabled = true;
-    try {
-      const r = await Importer.aiParse(text, { key: key || undefined, model: $('nimModel').value.trim() || undefined });
-      await handleResult({ questions: r.questions, warnings: r.warnings || [], rawText: text }, 'AI');
-    } catch (e) { status('AI helper: ' + e.message); }
-    $('impAI').disabled = false;
+    if (!text) return status('Choose a file or paste text first.');
+    try { await handleResult(Importer.parseText(text), 'Read without AI'); } catch (e) { status('Could not read that: ' + e.message); }
   };
 
   /* ---------- review ---------- */
