@@ -2,12 +2,12 @@
    so the laptop never processes video twice. Nothing is recorded or sent anywhere:
    frames stay in memory; the host window only gets small preview stills while calibrating. */
 const Cam = (() => {
-  const W = 1148, H = 646;                      // size of the camera panel on the 1920x1080 stage
+  const cv = document.getElementById('kites'), ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;            // drawing size = the kites canvas (same shape as the live-feed box on the stage)
   const PREV = new URLSearchParams(location.search).has('preview');   // the little copy inside the host window never opens the camera
   const video = document.getElementById('video');
   const pvimg = document.getElementById('pvimg');
   let remoteItems = [], remoteFrameAt = 0, snapUntil = 0, lastKitePost = 0;
-  const cv = document.getElementById('kites'), ctx = cv.getContext('2d');
   const tracker = new Tracker();
 
   let cfg = { on: false, deviceId: '', detect: true, sim: false, simN: 5, mirror: true, showQuad: true, kites: true, gpu: false, detHz: 15, mode: 'fast', sens: 'normal', engine: 'auto', handSens: 'normal', simDup: false, quad: DEFAULT_QUAD };
