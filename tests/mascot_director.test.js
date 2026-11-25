@@ -40,5 +40,9 @@ d.event('correct', now + 1000, { q: 1 }); const s1 = d.decide(S({ qId: 1, step: 
 d.event('correct', now + 2500, { q: 1 }); const s2 = d.decide(S({ qId: 1, step: 1 }), now + 2600).serial;
 ok(s2 > s1, 'a second point restarts the celebration');
 
+d = new D(); now = 5e6; d.decide(S({ step: 1 }), now);
+d.event('winner', now + 100, { q: 0 }); d.event('correct', now + 2100, { q: 0 });
+ok(d.decide(S({ step: 1 }), now + 2200).state === 'correct_answer', 'a 4th point during the crown still gets its spin');
+
 if (fails) { console.log(`FAIL: ${fails} mascot director check(s)`); process.exit(1); }
 console.log('mascot director: all checks passed'); process.exit(0);

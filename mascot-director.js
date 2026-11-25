@@ -24,7 +24,7 @@
   MascotDirector.prototype.event = function (kind, now, opt) {
     if (!STATE[kind]) return;
     // a stronger moment is not cut short by a weaker one (a hand going up during the point celebration)
-    var rank = { hand: 1, wrong: 2, correct: 2, winner: 3 };
+    var rank = { hand: 1, wrong: 2, correct: 2, winner: 2 };                // a new point/verdict always shows; only a hand waits
     if (this.ev && now < this.until && rank[kind] < rank[this.ev]) return;
     this.ev = kind; this.until = now + HOLD[kind]; this.serial++;            // serial: every reaction restarts its animation
     this.evQ = (opt && 'q' in opt) ? opt.q : this.q;                          // a reaction belongs to the question it happened on
