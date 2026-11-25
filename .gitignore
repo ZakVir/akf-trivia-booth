@@ -4,3 +4,4 @@ node_modules/
 .env
 questions.db
 questions.db-*
+__pycache__/

@@ -8,7 +8,7 @@
   It is never logged or sent anywhere except NVIDIA.
 Everything else works with no internet at all.
 """
-import http.server, json, os, socketserver, urllib.request, urllib.error
+import http.server, json, os, socketserver, sqlite3, time, urllib.request, urllib.error
 
 PORT = int(os.environ.get("PORT", "8787"))
 NIM_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
@@ -30,6 +30,29 @@ def load_env_file():
 
 
 load_env_file()
+
+# ---- the question-set library: one small SQLite file next to this script (git-ignored), nothing to install ----
+DB_PATH = os.environ.get("AKF_DB", os.path.join(ROOT, "questions.db"))
+MAX_BODY = 4 * 1024 * 1024
+
+
+def db():
+    con = sqlite3.connect(DB_PATH, timeout=5)
+    con.execute("CREATE TABLE IF NOT EXISTS sets (id INTEGER PRIMARY KEY, name TEXT NOT NULL, questions TEXT NOT NULL,"
+                " created REAL NOT NULL, updated REAL NOT NULL)")
+    return con
+
+
+def set_row(r, full=False):
+    qs = json.loads(r[2])
+    out = {"id": r[0], "name": r[1], "count": len(qs), "created": r[3], "updated": r[4]}
+    if full:
+        out["questions"] = qs
+    return out
+
+
+def valid_questions(qs):
+    return isinstance(qs, list) and len(qs) <= 2000 and all(isinstance(q, dict) and isinstance(q.get("q"), str) for q in qs)
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -59,12 +82,66 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _local(self):
+        """only this booth on this computer: request addressed to localhost (blocks DNS-rebinding tricks)"""
+        host = (self.headers.get("Host") or "").split(":")[0].lower()
+        return host in ("localhost", "127.0.0.1", "[::1]")
+
+    def _body(self):
+        n = int(self.headers.get("Content-Length", "0"))
+        if n > MAX_BODY:
+            raise ValueError("too big")
+        return json.loads(self.rfile.read(n) or b"{}")
+
+    def _set_id(self):
+        tail = self.path.split("?")[0].rstrip("/").split("/")[3:]          # /api/sets/<id>
+        return int(tail[0]) if tail and tail[0].isdigit() else None
+
     def do_GET(self):
         if self.path.startswith("/api/health"):
-            return self._json(200, {"ok": True, "envKey": bool(os.environ.get("NVIDIA_API_KEY"))})
+            return self._json(200, {"ok": True, "envKey": bool(os.environ.get("NVIDIA_API_KEY")), "db": True})
+        if self.path.startswith("/api/sets"):
+            if not self._local():
+                return self._json(403, {"error": "forbidden"})
+            sid = self._set_id()
+            with db() as con:
+                if sid is None:
+                    rows = con.execute("SELECT id, name, questions, created, updated FROM sets ORDER BY updated DESC").fetchall()
+                    return self._json(200, [set_row(r) for r in rows])
+                r = con.execute("SELECT id, name, questions, created, updated FROM sets WHERE id = ?", (sid,)).fetchone()
+                return self._json(200, set_row(r, True)) if r else self._json(404, {"error": "no such set"})
         return super().do_GET()
 
+    def do_DELETE(self):
+        if not self.path.startswith("/api/sets") or not self._local():
+            return self._json(403, {"error": "forbidden"})
+        sid = self._set_id()
+        if sid is None:
+            return self._json(400, {"error": "which set?"})
+        with db() as con:
+            con.execute("DELETE FROM sets WHERE id = ?", (sid,))
+        return self._json(200, {"ok": True})
+
     def do_POST(self):
+        if self.path.startswith("/api/sets"):
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if not self._local() or ctype != "application/json":
+                return self._json(403, {"error": "forbidden"})
+            try:
+                body = self._body()
+            except Exception:
+                return self._json(400, {"error": "bad json"})
+            name, qs, sid = str(body.get("name") or "").strip()[:120], body.get("questions"), body.get("id")
+            if not name or not valid_questions(qs):
+                return self._json(400, {"error": "need a name and a list of questions"})
+            now = time.time()
+            with db() as con:
+                if isinstance(sid, int) and con.execute("SELECT 1 FROM sets WHERE id = ?", (sid,)).fetchone():
+                    con.execute("UPDATE sets SET name = ?, questions = ?, updated = ? WHERE id = ?", (name, json.dumps(qs), now, sid))
+                else:
+                    sid = con.execute("INSERT INTO sets (name, questions, created, updated) VALUES (?, ?, ?, ?)",
+                                      (name, json.dumps(qs), now, now)).lastrowid
+            return self._json(200, {"id": sid})
         if not self.path.startswith("/api/parse"):
             return self._json(404, {"error": "not found"})
         # only this app may use the AI proxy: a JSON request (other websites can't send one without the browser asking first)
