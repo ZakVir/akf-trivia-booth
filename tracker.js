@@ -5,6 +5,15 @@ function iouBox(a, b) {                       // boxes {x0,y0,x1,y1}
   const u = (a.x1 - a.x0) * (a.y1 - a.y0) + (b.x1 - b.x0) * (b.y1 - b.y0) - i;
   return u > 0 ? i / u : 0;
 }
+// same body? skeletons compared keypoint by keypoint (two people side by side never match), else boxes almost the same
+function sameBody(a, b) {
+  if (a && b && a.kp && b.kp) {
+    let n = 0, d = 0; const sc = Math.max(a.s, b.s);
+    for (let i = 0; i < 17; i++) if (a.kp[i].v > 0.45 && b.kp[i].v > 0.45) { n++; d += Math.hypot(a.kp[i].x - b.kp[i].x, a.kp[i].y - b.kp[i].y); }
+    if (n >= 4) return d / n / sc < 0.3;
+  }
+  return !!(a && b && a.box && b.box && iouBox(a.box, b.box) > 0.7);
+}
 function appDist(a, b) {                       // clothing-colour histograms: 0 = identical, 1 = completely different
   let bc = 0; for (let i = 0; i < a.length; i++) bc += Math.sqrt(a[i] * b[i]);
   return Math.sqrt(Math.max(0, 1 - bc));
@@ -12,7 +21,7 @@ function appDist(a, b) {                       // clothing-colour histograms: 0 
 
 /* One-Euro filter: very steady when the person is still, quick when they really move. Units: normalised picture coordinates. */
 const HOLD_MS = 250;
-const EURO_MIN = 0.6, EURO_BETA = 5, EURO_D = 1.0;
+const EURO_MIN = 1.6, EURO_BETA = 5, EURO_D = 1.0;   // tuned on real clips (tests/eval): steady when still, little lag when moving
 const _alpha = (cut, dt) => { const tau = 1 / (2 * Math.PI * cut); return 1 / (1 + tau / dt); };
 function oneEuro(st, x, dt) {
   if (st.x === undefined) { st.x = x; st.dx = 0; return x; }
@@ -47,7 +56,8 @@ class Tracker {
         const ad = (t.app && d.app) ? appDist(t.app, d.app) : null;
         if (nd > 2.4 && !(iou > 0.3)) return;                                      // far away: not the same person
         if (ad != null && ad > 0.6 && nd > 0.6 && !(iou > 0.5)) return;            // clearly different clothes: not them
-        pairs.push([nd * 0.5 + (iou == null ? 0 : (1 - iou) * 0.4) + (ad == null ? 0 : ad * 0.8), t, i]);
+        const stale = Math.min(1, (now - t.seen) / 1500) * 0.35;               // a marker that has not seen anyone for a while is the last choice
+        pairs.push([nd * 0.5 + (iou == null ? 0 : (1 - iou) * 0.4) + (ad == null ? 0 : ad * 0.8) + stale, t, i]);
       });
     }
     pairs.sort((a, b) => a[0] - b[0]);
@@ -59,16 +69,16 @@ class Tracker {
       const rx0 = t.rx === undefined ? t.tx : t.rx, ry0 = t.ry === undefined ? t.ty : t.ry;
       t.vx = 0.6 * (t.vx || 0) + 0.4 * clamp((d.x - rx0) / dtr); t.vy = 0.6 * (t.vy || 0) + 0.4 * clamp((d.y - ry0) / dtr);
       t.rx = d.x; t.ry = d.y;
-      t.updAt = now; t.box = d.box || t.box;
+      t.updAt = now; t.box = d.box || t.box; t.det = d;
       if (d.app) { if (!t.app) t.app = d.app.slice(); else for (let k = 0; k < t.app.length; k++) t.app[k] = 0.9 * t.app[k] + 0.1 * d.app[k]; }
       // steady marker: smooth the raw detection, then ignore movement smaller than ~12% of the person's width
       t.fx = t.fx || {}; t.fy = t.fy || {};
       const ox = oneEuro(t.fx, d.x, dtr), oy = oneEuro(t.fy, d.y, dtr);
       const speed = Math.hypot(t.fx.dx, t.fy.dx);                                    // how fast they are really moving (picture widths per second)
       t.moving = speed > 0.45 * t.s;
-      // soft dead-zone: movement smaller than ~10% of the person's width is ignored (no shaking when still), but past that the target
+      // soft dead-zone: movement smaller than ~6% of the person's width is ignored (no shaking when still), but past that the target
       // follows continuously, trailing by at most that slack. No hold-then-jump, so slow movement stays smooth.
-      const ex = ox - t.tx, ey = oy - t.ty, ed = Math.hypot(ex, ey), dz = 0.10 * t.s, otx = t.tx, oty = t.ty;
+      const ex = ox - t.tx, ey = oy - t.ty, ed = Math.hypot(ex, ey), dz = 0.06 * t.s, otx = t.tx, oty = t.ty;
       if (ed > dz) { const f = (ed - dz) / ed; t.tx += ex * f; t.ty += ey * f; }
       const tvx = (t.tx - otx) / dtr, tvy = (t.ty - oty) / dtr;
       t.evx = 0.5 * (t.evx || 0) + 0.5 * tvx; t.evy = 0.5 * (t.evy || 0) + 0.5 * tvy;   // target velocity, used to glide the drawing between detections
@@ -83,7 +93,7 @@ class Tracker {
     const newCands = [];
     dets.forEach((d, i) => {
       if (usedDet.has(i) || !d.inside || d.good === false) return;
-      if (this.tracks.some(t => Math.hypot(d.x - t.tx, d.y - t.ty) < 0.5 * Math.max(d.s, t.s) + 0.02)) return;
+      if (this.tracks.some(t => (t.det && now - t.seen < 400 && (sameBody(t.det, d) || (t.box && d.box && iouBox(t.box, d.box) > 0.6))) || Math.hypot(d.x - t.tx, d.y - t.ty) < 0.3 * Math.max(d.s, t.s))) return;   // a second pose of someone already tracked, not a new person
       const c = this.cands.find(c => Math.hypot(c.x - d.x, c.y - d.y) < 0.08 + d.s);
       const hits = c ? c.hits + 1 : 1;
       if (hits >= 3 && this.tracks.length < PALETTE.length) {
@@ -110,7 +120,10 @@ class Tracker {
     const dead = new Set();
     for (let i = 0; i < this.tracks.length; i++) for (let j = i + 1; j < this.tracks.length; j++) {
       const a = this.tracks[i], b = this.tracks[j], key = a.id + '-' + b.id;
-      if (Math.hypot(a.tx - b.tx, a.ty - b.ty) < 0.5 * Math.max(a.s, b.s) + 0.02) {
+      const near = Math.hypot(a.tx - b.tx, a.ty - b.ty) < 0.6 * Math.max(a.s, b.s);
+      const fresh = now - a.seen < 400 && now - b.seen < 400;
+      const same = near && (fresh && a.det && b.det ? sameBody(a.det, b.det) : Math.hypot(a.tx - b.tx, a.ty - b.ty) < 0.3 * Math.max(a.s, b.s));   // people side by side (or a child on a parent's shoulders) stay two
+      if (same) {
         if (!this.close[key]) this.close[key] = now;
         else if (now - this.close[key] > 600) { dead.add(a.born > b.born ? a : b); delete this.close[key]; }
       } else delete this.close[key];
@@ -126,7 +139,7 @@ class Tracker {
     if (t.force) { if (now < t.force) return; t.force = 0; t.raised = false; }
     const pwy = t.pwy, pline = t.pline, pT = t.pT;
     t.pwy = d.wy; t.pline = d.line; t.pT = now;
-    const stillUp = t.raised && d.wy !== undefined && d.release !== undefined && d.wy < d.release;   // hand still above the (lower) release line
+    const stillUp = t.raised && !!d.held;                             // hand still up (lower bar than raising)
     if (d.raised || stillUp) {
       if (!t.rc) {
         let at = now;

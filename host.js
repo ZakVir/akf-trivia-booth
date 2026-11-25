@@ -7,7 +7,7 @@ const stored = (() => { try { const l = JSON.parse(localStorage.getItem(QKEY)); 
 const SAMPLE_QUESTIONS = (window.QUESTIONS || []).slice();     // the built-in set from questions.js (copied before a saved import replaces it)
 if (stored) window.QUESTIONS = stored;
 
-const DEFAULT_CAM = { on: true, deviceId: '', detect: true, sim: false, simN: 5, mirror: true, showQuad: false, kites: true, gpu: false, detHz: 12, ignoreQuad: true, debug: false, mode: 'fast', sens: 'normal', engine: 'auto', handSens: 'normal', simDup: false, buzzer: true, preferBuiltIn: true, quad: DEFAULT_QUAD, tape: null };
+const DEFAULT_CAM = { on: true, deviceId: '', detect: true, sim: false, simN: 5, mirror: true, showQuad: false, kites: true, gpu: false, detHz: 15, ignoreQuad: true, debug: false, mode: 'fast', sens: 'normal', engine: 'auto', handSens: 'normal', simDup: false, buzzer: true, preferBuiltIn: true, quad: DEFAULT_QUAD, tape: null };
 const zeroScores = () => Object.fromEntries(TEAM_ORDER.map(t => [t, 0]));
 const fresh = () => ({
   qId: 0, step: 0, kid: false, filter: 'all', teams: ['red', 'blue', 'gold'],
@@ -20,6 +20,7 @@ try { const o = JSON.parse(localStorage.getItem(KEY) || '{}'); S = Object.assign
 catch (e) { S = fresh(); }
 if (S.qId >= QUESTIONS.length) S.qId = 0;
 S.cam.sim = false; S.cam.debug = false;      // a reload never comes back in practice mode or with debug dots
+if (!S.cam.hz15) { if (S.cam.detHz === 12) S.cam.detHz = 15; S.cam.hz15 = true; }   // the old default (12/s) moves up to the new one (15/s): less lag, quicker hands
 
 let buzz = null, orderList = [];
 let history = [], tvSeen = 0, tvInfo = null, camStatus = { phase: 'off', devices: [], det: { state: 'off' }, people: { frame: 0, square: 0 } }, live = [];

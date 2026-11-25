@@ -10,7 +10,7 @@ const Cam = (() => {
   const cv = document.getElementById('kites'), ctx = cv.getContext('2d');
   const tracker = new Tracker();
 
-  let cfg = { on: false, deviceId: '', detect: true, sim: false, simN: 5, mirror: true, showQuad: true, kites: true, gpu: false, detHz: 12, mode: 'fast', sens: 'normal', engine: 'auto', handSens: 'normal', simDup: false, quad: DEFAULT_QUAD };
+  let cfg = { on: false, deviceId: '', detect: true, sim: false, simN: 5, mirror: true, showQuad: true, kites: true, gpu: false, detHz: 15, mode: 'fast', sens: 'normal', engine: 'auto', handSens: 'normal', simDup: false, quad: DEFAULT_QUAD };
   const badIds = new Set();
   let infer = false, detGen = 0, startSeq = 0, loadFailAt = 0, yoloFailedAt = 0, previewSeen = false, reid = null, reidFailed = false, reidBusy = false, lastEmb = 0, errN = 0, autoDevice = '', stream = null, phase = 'off', err = '', label = '', devices = [], retryT = null, fallbackTried = false;
   let det = { state: 'off', ms: 0, hz: 0, err: '' }, landmarker = null, yolo = null, yoloFailed = false, engineName = '', slowN = 0, loading = false, lastDetEnd = 0, detCount = 0, detT = performance.now();
@@ -158,101 +158,13 @@ const Cam = (() => {
   }
   function dropDetector() { detGen++; if (reid) { try { reid.dispose && reid.dispose(); } catch (e) {} } reid = null; reidFailed = false; det.reid = ''; dropLandmarker(); if (yolo) { try { yolo.dispose && yolo.dispose(); } catch (e) {} yolo = null; } yoloFailed = false; engineName = ''; det.engine = ''; }
 
-  /* YOLO gives COCO-17 keypoints (0 nose, 1/2 eyes, 3/4 ears, 5/6 shoulders, 7/8 elbows, 9/10 wrists, 11/12 hips, 15/16 ankles) */
-  function cocoToDet(p) {
-    const k = p.kp, ok = (i, t = 0.3) => k[i] && k[i].v > t;
-    const haveSh = ok(5) && ok(6);
-    const eyes = [1, 2].filter(i => ok(i)).map(i => k[i]);
-    const bw = p.box.x1 - p.box.x0, bh = p.box.y1 - p.box.y0;
-    const boxOnly = !ok(0) && !haveSh && !eyes.length;
-    if (boxOnly && !(p.score >= 0.5 && bh > 0.15)) return null;               // body clearly there but turned away / hidden: place the marker from the body box
-    const sh = haveSh ? { x: (k[5].x + k[6].x) / 2, y: (k[5].y + k[6].y) / 2 } : null;
-    const head = boxOnly ? { x: (p.box.x0 + p.box.x1) / 2, y: p.box.y0 + 0.07 * bh } : ok(0) ? { x: k[0].x, y: k[0].y } : eyes.length ? { x: eyes.reduce((a, e) => a + e.x, 0) / eyes.length, y: eyes.reduce((a, e) => a + e.y, 0) / eyes.length } : { x: sh.x, y: sh.y - 0.1 };
-    const up = sh ? Math.max(0.025, sh.y - head.y) : 0.06;
-    const top = { x: head.x, y: head.y - up * 0.9 };
-    let foot;
-    const ank = [15, 16].filter(i => ok(i)).map(i => k[i]);
-    if (ank.length) foot = { x: ank.reduce((a, e) => a + e.x, 0) / ank.length, y: ank.reduce((a, e) => a + e.y, 0) / ank.length };
-    else if (ok(11) && ok(12)) { const h = { x: (k[11].x + k[12].x) / 2, y: (k[11].y + k[12].y) / 2 }; foot = { x: h.x, y: h.y + (h.y - (sh ? sh.y : head.y)) * 1.8 }; }
-    else foot = { x: (sh || head).x, y: (sh || head).y + up * 6 };
-    foot.y = Math.min(foot.y, 1.2);
-    const s = haveSh ? Math.abs(k[5].x - k[6].x) : bw * 0.5;
-    let raised = false, hx = 0, hy = 0, dbg = null, wy, wline, wrel;
-    if (sh) {
-      const u = Math.max(0.02, sh.y - head.y), thr = { easy: 0.6, normal: 0.9, strict: 1.4 }[cfg.handSens] || 0.9, line = sh.y - thr * u, wr = [];
-      for (const i of [9, 10]) {
-        if (!k[i]) continue;
-        const up2 = k[i].v > 0.35 && k[i].y < line;
-        wr.push({ x: k[i].x, y: k[i].y, up: up2, sure: k[i].v > 0.35 });
-        if (up2) { raised = true; hx = k[i].x; hy = k[i].y; }
-      }
-      dbg = { line, x: sh.x, wr };
-      const sure = wr.filter(w => w.sure); wy = sure.length ? Math.min(...sure.map(w => w.y)) : undefined;   // a guessed (hidden) wrist must not keep a hand 'up' wline = line; wrel = sh.y - Math.max(0.15, thr - 0.5) * u;
-    }
-    let x0 = 9, y0 = 9, x1 = -9, y1 = -9;                         // torso box (no arms) for duplicate checks and clothing colour
-    for (const i of [0, 5, 6, 11, 12]) if (ok(i, 0.25)) { x0 = Math.min(x0, k[i].x); y0 = Math.min(y0, k[i].y); x1 = Math.max(x1, k[i].x); y1 = Math.max(y1, k[i].y); }
-    return { x: top.x, y: top.y, s: Math.max(0.04, s), score: p.score, good: boxOnly || ((ok(0) || eyes.length > 0) && haveSh), dbg, box: p.box,
-      bbox: x1 > x0 ? { x0, y0: Math.min(y0, top.y), x1, y1 } : { x0: p.box.x0, y0: p.box.y0, x1: p.box.x1, y1: p.box.y1 }, raised, hx, hy, wy, line: wline, release: wrel, inside: cfg.ignoreQuad || pointInQuad(foot, cfg.quad, 1), insideExp: cfg.ignoreQuad || pointInQuad(foot, cfg.quad, 1.12) };
-  }
-
+  /* One body -> marker spot, size, raised hand; duplicates removed. Shared with the offline accuracy tests: pose-logic.js */
+  const poseOpt = () => ({ handSens: cfg.handSens, sens: cfg.sens, inQuad: (pt, g) => cfg.ignoreQuad || pointInQuad(pt, cfg.quad, g) });
+  const cocoToDet = p => PoseLogic.toDet(p, poseOpt());
+  const poseToDet = lm => { const p = PoseLogic.fromMediaPipe(lm); return p ? PoseLogic.toDet(p, poseOpt()) : null; };
+  const cleanDets = dets => PoseLogic.clean(dets, { sens: cfg.sens });
   function dropLandmarker() { if (landmarker) { try { landmarker.close(); } catch (e) {} landmarker = null; } }
 
-  function poseToDet(lm) {
-    const vis = p => p && (p.visibility == null || p.visibility > 0.4);
-    const nose = lm[0], ls = lm[11], rs = lm[12], lh = lm[23], rh = lm[24], la = lm[27], ra = lm[28];
-    const haveSh = vis(ls) && vis(rs);
-    if (!vis(nose) && !haveSh) return null;
-    const sh = haveSh ? { x: (ls.x + rs.x) / 2, y: (ls.y + rs.y) / 2 } : null;
-    const head = vis(nose) ? { x: nose.x, y: nose.y } : { x: sh.x, y: sh.y - 0.1 };
-    const up = sh ? Math.max(0.025, sh.y - head.y) : 0.06;
-    const top = { x: head.x, y: head.y - up * 0.9 };
-    let foot;
-    if (vis(la) || vis(ra)) { const a = [la, ra].filter(vis); foot = { x: a.reduce((s, p) => s + p.x, 0) / a.length, y: a.reduce((s, p) => s + p.y, 0) / a.length }; }
-    else if (vis(lh) && vis(rh)) { const h = { x: (lh.x + rh.x) / 2, y: (lh.y + rh.y) / 2 }; foot = { x: h.x, y: h.y + (h.y - (sh ? sh.y : head.y)) * 1.8 }; }
-    else foot = { x: (sh || head).x, y: (sh || head).y + up * 6 };
-    foot.y = Math.min(foot.y, 1.2);
-    const s = haveSh ? Math.abs(ls.x - rs.x) : 0.08;
-    // hand raised? wrist above the shoulder line by more than ~thr nose-to-shoulder lengths
-    let raised = false, hx = 0, hy = 0, dbg = null, wy, wline, wrel;
-    if (sh && vis(nose)) {
-      const u = Math.max(0.02, sh.y - nose.y), thr = { easy: 0.6, normal: 0.9, strict: 1.4 }[cfg.handSens] || 0.9, line = sh.y - thr * u, wr = [];
-      for (const w of [lm[15], lm[16]]) {
-        if (!w) continue;
-        const up = (w.visibility == null || w.visibility > 0.35) && w.y < line;
-        wr.push({ x: w.x, y: w.y, up, sure: w.visibility == null || w.visibility > 0.35 });
-        if (up) { raised = true; hx = w.x; hy = w.y; }
-      }
-      dbg = { line, x: sh.x, wr };
-      const sure = wr.filter(w => w.sure); wy = sure.length ? Math.min(...sure.map(w => w.y)) : undefined;   // a guessed (hidden) wrist must not keep a hand 'up' wline = line; wrel = sh.y - Math.max(0.15, thr - 0.5) * u;
-    }
-    let x0 = 9, y0 = 9, x1 = -9, y1 = -9;
-    for (const i of [0, 11, 12, 23, 24]) { const p = lm[i]; if (p && (p.visibility == null || p.visibility > 0.3)) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); } }
-    const vv = p => (p && p.visibility != null) ? p.visibility : 0.6;
-    const score = (vv(nose) + vv(ls) + vv(rs)) / 3, good = vis(nose) && haveSh;
-    return { x: top.x, y: top.y, s: Math.max(0.04, s), score, good, dbg, bbox: { x0, y0: Math.min(y0, top.y), x1, y1 }, raised, hx, hy, wy, line: wline, release: wrel, inside: cfg.ignoreQuad || pointInQuad(foot, cfg.quad, 1), insideExp: cfg.ignoreQuad || pointInQuad(foot, cfg.quad, 1.12) };
-  }
-
-  /* one person = one detection: drop tiny background figures and merge overlapping / ghost poses */
-  function isDup(a, b) {
-    if (Math.hypot(a.x - b.x, a.y - b.y) < 0.55 * Math.max(a.s, b.s) + 0.015) return true;
-    const A = a.bbox, B = b.bbox;
-    if (A && B) {
-      const ix = Math.max(0, Math.min(A.x1, B.x1) - Math.max(A.x0, B.x0)), iy = Math.max(0, Math.min(A.y1, B.y1) - Math.max(A.y0, B.y0)), inter = ix * iy;
-      const aa = (A.x1 - A.x0) * (A.y1 - A.y0), ab = (B.x1 - B.x0) * (B.y1 - B.y0);
-      if (aa > 0 && ab > 0 && (inter / Math.min(aa, ab) > 0.6 || inter / (aa + ab - inter) > 0.45)) return true;
-    }
-    return false;
-  }
-  function cleanDets(dets) {
-    const minS = { strict: 0.04, normal: 0.022, loose: 0.012 }[cfg.sens] || 0.022;
-    const keep = [];
-    for (const d of dets.filter(d => d.s >= minS).sort((a, b) => b.score - a.score)) {
-      const k = keep.find(k => isDup(k, d));
-      if (!k) keep.push(d);
-      else if (d.raised && !k.raised) { k.raised = true; k.hx = d.hx; k.hy = d.hy; }     // a raised hand on a duplicate pose still counts
-    }
-    return keep;
-  }
   /* Crowd mode: look at the whole picture AND zoomed left/right halves, so small or crowded people are found too */
   const cropCv = document.createElement('canvas'), cropG = cropCv.getContext('2d');
   function crowdPoses() {
@@ -359,7 +271,7 @@ const Cam = (() => {
   async function detectLoop() {
     if (PREV) return;
     if (document.body.classList.contains('replaying')) { setTimeout(detectLoop, 120); return; }
-    const interval = 1000 / (cfg.detHz || 12);
+    const interval = 1000 / (cfg.detHz || 15);
     const now = performance.now();
     infer = false;
     try {
@@ -414,7 +326,7 @@ const Cam = (() => {
     const nt = performance.now();
     if (nt - detT > 1000) { det.hz = detCount * 1000 / (nt - detT); detCount = 0; detT = nt; }
     // adaptive: if inference is slow, back off so the laptop stays cool and the game stays smooth
-    const wait = Math.max(8, interval - (performance.now() - now)) + (det.ms > interval ? det.ms * 0.5 : 0);
+    const wait = Math.max(8, interval - (performance.now() - now)) + (det.ms > interval * 1.5 ? det.ms * 0.4 : 0);   // only back off when clearly too slow
     setTimeout(detectLoop, wait);
   }
 
@@ -460,11 +372,11 @@ const Cam = (() => {
         const [x, y] = mapPt(d.x, d.y);
         ctx.beginPath(); ctx.arc(x, y, 14, 0, 7); ctx.lineWidth = 4; ctx.strokeStyle = d.inside ? '#2FA562' : '#E5484D'; ctx.stroke();
         ctx.fillStyle = '#2A2D3A'; ctx.fillText(d.inside ? 'head' : 'outside', x, y - 22);
-        if (d.dbg) {
-          const [lx, ly] = mapPt(d.dbg.x - 0.12, d.dbg.line), [rx] = mapPt(d.dbg.x + 0.12, d.dbg.line);
+        if (d.line !== undefined) {                                     // pink: the height a wrist must reach; dots: wrists (green = raised)
+          const [lx, ly] = mapPt(d.x - 0.1, d.line), [rx] = mapPt(d.x + 0.1, d.line);
           ctx.lineWidth = 3; ctx.strokeStyle = '#EC5CA8'; ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(rx, ly); ctx.stroke();
-          for (const w of d.dbg.wr) { const [wx, wy] = mapPt(w.x, w.y); ctx.beginPath(); ctx.arc(wx, wy, 11, 0, 7); ctx.fillStyle = w.up ? '#2FA562' : 'rgba(42,45,58,.5)'; ctx.fill(); }
         }
+        if (d.kp) for (const i of [9, 10]) { const w = d.kp[i]; if (w.v < 0.35) continue; const [wx, wy] = mapPt(w.x, w.y); ctx.beginPath(); ctx.arc(wx, wy, 11, 0, 7); ctx.fillStyle = d.raised ? '#2FA562' : 'rgba(42,45,58,.5)'; ctx.fill(); }
         if (d.bbox) { const [ax, ay] = mapPt(d.bbox.x0, d.bbox.y0), [bx, by] = mapPt(d.bbox.x1, d.bbox.y1); ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(42,45,58,.55)'; ctx.strokeRect(Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay)); }
       }
     }

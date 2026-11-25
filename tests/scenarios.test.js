@@ -77,7 +77,7 @@ const colorAt = (T, x) => { const t = T.tracks.reduce((b, t) => (!b || Math.abs(
   const T = new ctx.Tracker(); let now = 1000; let events = 0;
   for (let i = 0; i < 400; i++) {
     const wy = i < 20 ? 0.7 : 0.4 + noise(0.012);                 // wrist climbs to the line, then hovers around it
-    T.update([det(0.4, 0.3, 1, { wy, raised: wy < 0.4, hx: 0.42, hy: wy })], now); now += DT;
+    T.update([det(0.4, 0.3, 1, { wy, raised: wy < 0.4, held: wy < 0.47, hx: 0.42, hy: wy })], now); now += DT;   // held = still above the lower release bar
     events += T.drain().length;
   }
   ok(events <= 3, 'S5: hovering hand makes at most a few events, not dozens (' + events + ')');

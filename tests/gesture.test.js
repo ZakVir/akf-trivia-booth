@@ -5,7 +5,7 @@ const ctx = { PALETTE, TEAM_ORDER: PALETTE.map(p => p.id), Math, Date, console, 
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(__dirname + '/../tracker.js', 'utf8') + '\nthis.Tracker = Tracker;', ctx);
 const LINE = 0.40;
-const person = (x, wy) => ({ x, y: 0.3, s: 0.1, score: 1, good: true, inside: true, insideExp: true, wy, line: LINE, raised: wy < LINE, hx: x, hy: wy });
+const person = (x, wy) => ({ x, y: 0.3, s: 0.1, score: 1, good: true, inside: true, insideExp: true, wy, line: LINE, raised: wy < LINE, held: wy < LINE, hx: x, hy: wy });
 let fails = 0; const ok = (c, m) => { if (!c) { console.error('FAIL: ' + m); fails++; } else console.log('ok: ' + m); };
 const settle = T => { let now = 1000; for (let i = 0; i < 5; i++) { T.update([person(0.3, 0.7), person(0.7, 0.7)], now); now += 83; } return now; };
 

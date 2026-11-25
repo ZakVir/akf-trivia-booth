@@ -249,3 +249,26 @@ Three code reviews (detection, buzzer/replay, host/server) + headless-browser en
 - server.py: AI proxy only accepts JSON requests addressed to localhost. start.command: reuses a running server, reports a busy port, waits for the server before opening the page.
 - check.js never hangs when the camera sends no frames. Fonts added in `fonts/` (OFL).
 Still to verify on the Mac with the real camera: YOLO provider/fallback note in Setup > Connectivity, marker smoothness, replay start delay with real pictures.
+
+---------------------------------------------------------------------------------------------------
+## 12. ACCURACY ROUND (2026-11-25): measured on real video, not guessed
+
+New: `pose-logic.js` (one body -> marker spot, raised hand, duplicate check; shared by cam.js and the tests) and an
+offline harness `tests/eval/`:
+- `node tests/eval/detect-clips.js <outDir> clip.mp4 ...` runs the REAL YOLO26n (ort wasm in node) at 12/s and caches people per frame.
+- `node tests/eval/eval.js <outDir>/*.n.json` replays them through pose-logic + tracker exactly like the browser and scores:
+  coverage, colour switches, merged people, ghost markers, shake, lag, raise events. `LEGACY=<dir>` scores an older version.
+- Clips used (free Mixkit stock, kept OUT of the repo): friends walking side by side (8900), child on dad's shoulders (39767),
+  group hug (4709), office high-five (9088), classroom raises (6672, 35968, 11553), conference audience from behind (13192),
+  NEGATIVES hand over the face (46818) and palm to camera (40194).
+Results vs the previous version (same clips): coverage 26-88% -> 92-100%; child-on-shoulders merged 16 -> 0; hug merged
+31 -> 9; switches 9 -> 5; lag ~-20%; hand-over-face false raise gone.
+Changes: head centre = confidence-blended nose/eyes/ears (no jumps); face not seen -> marker from the box top; duplicates
+only when skeletons match point-by-point or boxes coincide (never "heads close"); tracker spawn/merge use the same rule;
+stale markers are the last choice for a detection; raise = wrist above head, or bent raise with hand at forehead+ , elbow
+up and forearm upright; from behind, a box reaching well above the head; held hand uses its own (lower) bar - the old
+`release` field was never set (assignment ended up inside a comment). Smoothing tuned on the clips: One-Euro min cutoff
+1.6 Hz, dead-zone 6% of body width. Detection default 15/s (old saved 12/s migrated), gentler slow-machine back-off.
+Known limits: a raise must be held 0.25 s (quick high-fives can be missed); people cut by the picture edge or right up
+against the lens can flicker; the model sometimes cannot see wrists of people at the very edge.
+Hosting: vercel.json sends COOP/COEP/CORP (multi-threaded wasm) and redirects / to host.html.
