@@ -164,19 +164,22 @@ function renderCards() {
 }
 
 /* ---- 'Did you know?' beside the podium: only facts from questions already answered (never a spoiler) ---- */
-const seenFacts = []; let factIdx = 0;
+const seenFacts = []; let factIdx = 0, factsPaused = false;
+const factTime = () => !!S && S.step >= 1;                                   // only while an answer is shown: a fact may answer the open question
 function noteFact() {
   const q = S && QUESTIONS[S.qId];
-  if (!q || S.step < 2) return;
+  if (!factTime()) $('didyou').classList.remove('on');
+  else if (seenFacts.length && !factsPaused && !$('didyou').classList.contains('on')) showFact();   // answer shown again: bring the facts back
+  if (!q || S.step < 2 || factsPaused) return;
   const f = S.kid ? (q.kidFact || q.fact) : (q.fact || q.kidFact);
   if (f && !seenFacts.includes(f)) { seenFacts.push(f); factIdx = seenFacts.length - 1; showFact(); }
 }
 function showFact() {
-  const box = $('didyou'); if (!seenFacts.length) { box.classList.remove('on'); return; }
+  const box = $('didyou'); if (!seenFacts.length || !factTime()) { box.classList.remove('on'); return; }
   box.classList.remove('on');
-  setTimeout(() => { $('didyouTxt').textContent = seenFacts[factIdx % seenFacts.length]; box.classList.add('on'); }, 350);
+  setTimeout(() => { if (!factTime()) return; $('didyouTxt').textContent = seenFacts[factIdx % seenFacts.length]; box.classList.add('on'); }, 350);
 }
-setInterval(() => { if (seenFacts.length > 1) { factIdx++; showFact(); } }, 9000);
+setInterval(() => { if (!factTime()) { $('didyou').classList.remove('on'); return; } if (seenFacts.length > 1) factIdx++; showFact(); }, 9000);
 
 /* ---- timer bar ---- */
 function tick() {
@@ -193,8 +196,11 @@ tick();
 /* ---- sync ---- */
 CH.addEventListener('message', e => {
   const m = e.data;
-  if (m.type === 'questions') { window.QUESTIONS = m.list; qKey = ''; if (S) render(); }
-  else if (m.type === 'state') { S = m.state; render(); handleEvent(m.event); }
+  if (m.type === 'questions') {                                            // a new question list: start the facts afresh, and ignore the
+    window.QUESTIONS = m.list; qKey = ''; seenFacts.length = 0; factsPaused = true;   // old game state until the host's reset arrives
+    $('didyou').classList.remove('on'); if (S) render();
+  }
+  else if (m.type === 'state') { S = m.state; if (S.step < 2) factsPaused = false; render(); handleEvent(m.event); }
 });
 CH.postMessage({ type: 'hello', preview: PREVIEW });
 if (!PREVIEW) setInterval(() => CH.postMessage({ type: 'hb', t: Date.now() }), 2000);
