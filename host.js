@@ -110,7 +110,7 @@ function renderHost() {
     return `<div class="pl" style="--c:${TEAMS[t].color}"><div class="nm">${TEAMS[t].name}</div><div class="n">${S.scores[t]}</div>` +
       `<button class="go" data-t="${t}" data-d="1">+1<kbd style="color:#fff;background:rgba(255,255,255,.25);border-color:transparent">${i}</kbd></button>` +
       `<button class="m" data-t="${t}" data-d="-1">-1</button></div>`;
-  }).join('') : `<div class="empty">No players yet. Turn the camera on (Setup ⚙), try Practice mode, or pick a player count below.</div>`;
+  }).join('') : `<div class="empty">No players yet. Turn the camera on (Setup), try Practice mode, or pick a player count below.</div>`;
   $('kid').firstChild.textContent = `Kid wording: ${S.kid ? 'ON' : 'off'}`;
   $('nTeams').innerHTML = [1, 2, 3, 4, 5, 6, 7, 8].map(n => `<option value="${n}" ${n === S.teams.length ? 'selected' : ''}>${n}</option>`).join('');
   $('tDur').value = String(S.timer.duration);
@@ -127,7 +127,29 @@ function renderHost() {
   if (window.Cal) Cal.sync();
 }
 
+/* dashboard under the controls: standings, the next question (with its answer, host only) and booth numbers */
+function renderDash() {
+  const teams = TEAM_ORDER.filter(t => S.board.includes(t) || S.scores[t] > 0)
+    .sort((a, b) => (S.scores[b] - S.scores[a]) || (TEAM_ORDER.indexOf(a) - TEAM_ORDER.indexOf(b)));
+  const max = Math.max(1, ...teams.map(t => S.scores[t]));
+  $('standings').innerHTML = teams.length ? teams.map((t, i) => {
+    const lead = i === 0 && S.scores[t] > 0;
+    return `<div class="r ${lead ? 'lead' : ''}" style="--c:${TEAMS[t].color}"><span class="rk">${lead ? '★' : i + 1}</span>` +
+      `<div><div class="tn">${TEAMS[t].name}</div><div class="bar"><i style="width:${S.scores[t] / max * 100}%"></i></div></div><span class="pts">${S.scores[t]}</span></div>`;
+  }).join('') : '<div class="empty">No players yet.</div>';
+  const v = visible(), p = v.indexOf(S.qId), nx = v.length > 1 ? QUESTIONS[v[(p + 1 + v.length) % v.length]] : null;
+  $('upNext').innerHTML = nx ? `<div class="nextq">${esc(nx.emoji || '')} ${esc(nx.q)}</div>` +
+    `<div class="nexta">Answer: <b>${esc(qType(nx) === 'free' ? (nx.answerText || 'you decide') : (nx.choices || [])[nx.answer])}</b></div>` : '<div class="empty">No other question in this list.</div>';
+  const d = camStatus.det || {}, pp = camStatus.people || {};
+  const stat = (val, k) => `<div class="stat"><div class="v">${val}</div><div class="k">${k}</div></div>`;
+  $('boothStats').innerHTML = stat(p >= 0 ? `${p + 1} / ${v.length}` : '–', 'question') +
+    stat(S.cam.sim ? 'Practice' : (pp.square || 0), 'in the square') +
+    stat(d.state === 'running' && d.ms ? Math.round(d.ms) + ' ms' : '–', 'per detection') +
+    stat(d.state === 'running' && d.hz ? d.hz.toFixed(1) + '/s' : '–', 'detections');
+}
+
 function renderPills() {
+  renderDash();
   const tv = Date.now() - tvSeen < 5000;
   const set = (id, text, cls) => { const e = $(id); e.textContent = text; e.className = 'pill ' + cls; };
   set('pTv', tv ? 'Live view: running' : 'Live view: starting', tv ? 'ok' : 'warn');
