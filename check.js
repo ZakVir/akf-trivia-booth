@@ -49,7 +49,7 @@ async function fillCameraList() {
   return devs;
 }
 async function openCamera(deviceId) {
-  return navigator.mediaDevices.getUserMedia({ video: Object.assign({ width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60, max: 120 } }, deviceId ? { deviceId: { exact: deviceId } } : {}), audio: false });
+  return navigator.mediaDevices.getUserMedia({ video: Object.assign({ width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60, max: 120 } }, deviceId ? { deviceId: { exact: deviceId } } : {}), audio: false });
 }
 async function camera() {
   if (stream) stream.getTracks().forEach(t => t.stop());
@@ -87,12 +87,15 @@ async function yolo() {
       const load = performance.now() - t0; const ms = [];
       for (let i = 0; i < 12; i++) { const a = performance.now(); await d.detect(src); ms.push(performance.now() - a); await sleep(5); }
       ms.sort((a, b) => a - b); const med = ms[Math.floor(ms.length / 2)];
-      add(med < 100 ? 'ok' : med < 200 ? 'warn' : 'bad', `YOLO26${size} on ${prov}${prov === 'wasm' ? ' (' + (d.threads || 1) + ' threads)' : ''}`, `load ${(load / 1000).toFixed(1)} s, median ${med.toFixed(0)} ms per frame (about ${(1000 / med).toFixed(0)} detections/s)`);
+      add(med < 100 ? 'ok' : 'warn', `YOLO26${size} on ${prov}${prov === 'wasm' ? ' (' + (d.threads || 1) + ' threads)' : ''}`, `load ${(load / 1000).toFixed(1)} s, median ${med.toFixed(0)} ms per frame (about ${(1000 / med).toFixed(0)} detections/s)`);
       if (!best[size] || med < best[size].ms) best[size] = { prov, ms: med };
       if (d.dispose) d.dispose();
     } catch (e) { add('warn', `YOLO26${size} on ${prov}`, 'could not run: ' + ((e && e.message) || e)); }
   }
-  for (const size of Object.keys(best)) add('ok', `Fastest for YOLO26${size}`, `${best[size].prov} at ${best[size].ms.toFixed(0)} ms. The booth app measures this itself on first start and remembers it.`);
+  for (const size of Object.keys(best)) {                                 // only the option the booth will really use can fail
+    const ms = best[size].ms, tip = ms >= 120 ? ' Slower than this Mac can do: plug in the charger, turn off Low Power Mode, close other apps and browser tabs, then run again.' : '';
+    add(ms < 120 ? 'ok' : size === 's' ? 'warn' : ms < 250 ? 'warn' : 'bad', `Fastest for YOLO26${size}`, `${best[size].prov} at ${ms.toFixed(0)} ms (about ${(1000 / ms).toFixed(0)} detections/s). The booth measures this itself on first start and remembers it.` + tip);
+  }
 }
 
 async function recorder() {
@@ -110,7 +113,8 @@ async function recorder() {
   })]);
   await sleep(300);
   const sec = (performance.now() - t0) / 1000, fps = done / sec;
-  add(fps >= 55 ? 'ok' : fps >= 28 ? 'warn' : 'bad', 'Replay recorder speed', `saved ${done} of ${frames} camera frames in ${sec.toFixed(1)} s = ${fps.toFixed(0)}/s, skipped ${shed}. 9 s of replay memory is about ${(bytes / sec * 9 / 1048576).toFixed(1)} MB.`);
+  const kept = frames ? done / frames : 0;                                  // the recorder's job: keep up with the camera (a 30 fps camera can only give 30/s)
+  add(kept >= 0.95 ? 'ok' : kept >= 0.8 ? 'warn' : 'bad', 'Replay recorder speed', `saved ${done} of ${frames} camera frames in ${sec.toFixed(1)} s = ${fps.toFixed(0)}/s, skipped ${shed}. 9 s of replay memory is about ${(bytes / sec * 9 / 1048576).toFixed(1)} MB.`);
 }
 
 $('bBasic').onclick = () => run('Browser + files', basic);
