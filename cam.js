@@ -231,7 +231,7 @@ const Cam = (() => {
       if (gen !== detGen || r !== reid) return;                          // detector was reset meanwhile: these results are stale
       det.reidMs = Math.round(r.lastMs || 0);
       tracker.applyEmbeddings(cand.map((d, i) => ({ x: d.x, y: d.y, s: d.s, emb: embs[i] })), performance.now());
-      for (const [a, b] of tracker.drainSwaps()) if (window.Buzz && Buzz.swapColors) Buzz.swapColors(a, b);
+      for (const [a, b, kind] of tracker.drainSwaps()) if (window.Buzz && Buzz.swapColors) Buzz.swapColors(a, b, kind);
       pushTracks();
     }).catch(e => { if (gen !== detGen || r !== reid) return; det.reidErr = (e && e.message) || String(e); try { r.dispose && r.dispose(); } catch (e2) {} reid = null; reidFailed = true; }).finally(() => { reidBusy = false; });
   }

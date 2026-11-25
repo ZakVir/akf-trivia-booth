@@ -116,10 +116,17 @@ const Buzz = (() => {
       pendTimer = setTimeout(resolve, delay);
     }
   }
-  function swapColors(a, b) {                   // re-ID swapped two identities: move the hands-up order with them
+  function swapColors(a, b, kind) {             // re-ID swapped two identities: move the hands-up order with them
     let ch = false;
-    for (const o of orderList) { if (o.color === a) { o.color = b; ch = true; } else if (o.color === b) { o.color = a; ch = true; } }
-    for (const p of pend) { if (p.color === a) p.color = b; else if (p.color === b) p.color = a; }
+    if (kind === 'restore') {                   // someone came back and got their old colour b back from temporary colour a (one-way)
+      const had = orderList.some(o => o.color === b);
+      if (had) { const n = orderList.length; orderList = orderList.filter(o => o.color !== a); ch = orderList.length !== n; if (ch) orderList.forEach((o, i) => { o.rank = i + 1; }); }   // they keep their earlier place
+      else for (const o of orderList) if (o.color === a) { o.color = b; ch = true; }                  // the raise made under the temporary colour is theirs
+      pend = pend.filter(p => !(p.color === a && pend.some(q => q.color === b))); for (const p of pend) if (p.color === a) p.color = b;
+    } else {
+      for (const o of orderList) { if (o.color === a) { o.color = b; ch = true; } else if (o.color === b) { o.color = a; ch = true; } }
+      for (const p of pend) { if (p.color === a) p.color = b; else if (p.color === b) p.color = a; }
+    }
     if (ch) { syncOrders(); orderMsg(); }
   }
   function reopen() {                           // "wrong answer": the first hand is out, anyone still holding a hand up gets queued again

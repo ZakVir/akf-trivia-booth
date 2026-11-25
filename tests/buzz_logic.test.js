@@ -81,6 +81,19 @@ const arm = (q = 0, step = 0, buzzer = true) => Buzz.arm({ qId: q, step, cam: { 
   ok(sw && sw.list[0].color === cols[1], 'swapping two identities moves the order entry too');
   await sleep(2000); emit({ type: 'replay-skip' });
 
+  // 6b) someone who left and came back gets their colour back (one-way restore): their hands-up place goes with them
+  arm(8); await sleep(200); clear();
+  Buzz.raise([{ color: 'pink', at: performance.now() }]);        // raised while wearing a temporary colour
+  Buzz.swapColors('pink', 'purple', 'restore');
+  let ro = types('order').pop();
+  ok(ro && ro.list.length === 1 && ro.list[0].color === 'purple', 'restore: a raise made under the temporary colour moves to the restored colour');
+  arm(9); await sleep(200); clear();
+  Buzz.raise([{ color: 'red', at: performance.now() - 500 }]); Buzz.raise([{ color: 'pink', at: performance.now() }]);
+  Buzz.swapColors('pink', 'red', 'restore');
+  ro = types('order').pop();
+  ok(ro && ro.list.length === 1 && ro.list[0].color === 'red' && ro.list[0].rank === 1, 'restore: a returning player keeps their earlier number (no rank moved to an unused colour)');
+  await sleep(2000); emit({ type: 'replay-skip' });
+
   // 7) Replay key never plays stale footage
   emit({ type: 'buzz-reopen' }); await sleep(100); clear();
   emit({ type: 'replay-last' }); await sleep(600);
