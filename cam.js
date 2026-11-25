@@ -4,6 +4,7 @@
 const Cam = (() => {
   const cv = document.getElementById('kites'), ctx = cv.getContext('2d');
   const W = cv.width, H = cv.height;            // drawing size = the kites canvas (same shape as the live-feed box on the stage)
+  const KEEP_OUT = { x: W * 0.26, y: H * 0.21 };   // top-left corner of the feed covered by the mascot tab and the 'Live Feed' label (canvas units)
   const PREV = new URLSearchParams(location.search).has('preview');   // the little copy inside the host window never opens the camera
   const video = document.getElementById('video');
   const pvimg = document.getElementById('pvimg');
@@ -358,7 +359,9 @@ const Cam = (() => {
           if (!PREV) { const target = tr.order ? 1 : 0, cur = tr.morph || 0; tr.morph = cur + Math.sign(target - cur) * Math.min(Math.abs(target - cur), dt / 0.5); }
           const [x, y] = mapPt(tr.x, tr.y), size = Math.max(74, Math.min(160, (tr.rs || tr.s) * W * 1.0));
           // float above the head, but never off the top of the picture
-          if (!covered) Kites.draw(ctx, Math.min(W - size * 0.6, Math.max(size * 0.6, x)), Math.max(size * 0.75, y - size * 0.95), size, TEAMS[tr.color].color, t, TEAM_ORDER.indexOf(tr.color) * 1.3, tr.order || '', tr.morph || 0);
+          let kx = Math.min(W - size * 0.6, Math.max(size * 0.6, x)), ky = Math.max(size * 0.75, y - size * 0.95);
+          if (kx - size * 0.6 < KEEP_OUT.x && ky - size * 0.75 < KEEP_OUT.y) ky = KEEP_OUT.y + size * 0.75;   // never hidden under the mascot tab / 'Live Feed' label
+          if (!covered) Kites.draw(ctx, kx, ky, size, TEAMS[tr.color].color, t, TEAM_ORDER.indexOf(tr.color) * 1.3, tr.order || '', tr.morph || 0);
         }
         if (!PREV && previewSeen && now - lastKitePost > 70) {      // let the host-window preview mirror the kites
           lastKitePost = now;
