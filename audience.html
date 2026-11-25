@@ -36,6 +36,7 @@
   </section>
 
   <!-- the little screen-buddy tab between the panels -->
+  <div id="mascot3d" aria-hidden="true"></div>   <!-- 3D mascot (mascot3d.mjs); the flat face below stays if 3D cannot run -->
   <div id="mascotTab" aria-hidden="true">
     <svg viewBox="0 0 149 146" width="149" height="146">
       <path d="M0 0H149V111Q149 135 125 135H86V146H58V135H24Q0 135 0 111Z" fill="#E2E5ED"/>
@@ -72,5 +73,7 @@
 <script src="reid.js"></script>
 <script src="cam.js"></script>
 <script src="audience.js"></script>
+<script type="importmap">{ "imports": { "three": "./vendor/three/three.module.min.js", "three/addons/": "./vendor/three/addons/" } }</script>
+<script type="module" src="mascot3d.mjs"></script>
 </body>
 </html>

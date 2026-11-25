@@ -6,7 +6,7 @@ const list = fast.concat(process.argv.includes('--slow') ? slow : []);
 let bad = 0;
 // 0) every app script must at least parse (a stray '//' in the middle of a line once silently disabled code)
 {
-  const root = path.join(__dirname, '..'), files = fs.readdirSync(root).filter(f => f.endsWith('.js'));
+  const root = path.join(__dirname, '..'), files = fs.readdirSync(root).filter(f => f.endsWith('.js') || f.endsWith('.mjs'));
   const broken = files.filter(f => spawnSync('node', ['--check', path.join(root, f)], { encoding: 'utf8' }).status !== 0);
   console.log((broken.length ? 'FAIL  ' : 'pass  ') + 'syntax   ' + (broken.length ? 'cannot parse: ' + broken.join(', ') : files.length + ' app scripts parse'));
   if (broken.length) bad++;
