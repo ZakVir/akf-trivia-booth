@@ -211,13 +211,17 @@ const Buzz = (() => {
     if (building) return;
     const now = performance.now();
     if (rec.length < 2 || now - rec[rec.length - 1].t > 10000) return;      // nothing recent (never replay stale footage)
-    let frames = framesBetween(now - 4500, now);
+    // live camera: end the clip at the newest frame that has a picture (no pictures are saved while a replay plays,
+    // so right after one the newest seconds are markers only); practice mode has no pictures at all
+    let end = now;
+    if (rec.some(f => f.blob)) { let i = rec.length - 1; while (i >= 0 && !rec[i].blob) i--; end = rec[i].t; if (now - end > 10000) return; }
+    let frames = framesBetween(end - 4500, end);
     if (frames.length < 2) return;
     const my = ++replayToken; building = true;
     if (!play) { disposeClip(lastClip); lastClip = null; }
-    const list = orderList.map(o => ({ color: o.color, at: o.at })), info = { winner: orderList[0] ? orderList[0].color : null }, passes = [{ from: frames[0].t - now, to: 0, speed: 0.55 }];
-    lastSrc = { frames, list, info, first: now, passes, manual: true };
-    let clip; try { clip = await buildClip(frames, list, info, now, passes, true); } finally { building = false; }
+    const list = orderList.map(o => ({ color: o.color, at: o.at })), info = { winner: orderList[0] ? orderList[0].color : null }, passes = [{ from: frames[0].t - end, to: 0, speed: 0.55 }];
+    lastSrc = { frames, list, info, first: end, passes, manual: true };
+    let clip; try { clip = await buildClip(frames, list, info, end, passes, true); } finally { building = false; }
     if (my !== replayToken) { disposeClip(clip); return; }
     disposeClip(lastClip); lastClip = clip;
     runClip();
