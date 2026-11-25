@@ -46,8 +46,8 @@ function stagePos(el) {
 function handleEvent(ev) {
   if (!ev || ev.id === lastEventId) return;
   lastEventId = ev.id;
-  if (ev.type === 'win') mascotDir.event(ev.streak >= 3 ? 'winner' : 'correct', performance.now());       // point given (3 in a row: crown)
-  else if (ev.type === 'oops') mascotDir.event('wrong', performance.now());                               // nobody got it
+  if (ev.type === 'win') mascotDir.event(ev.streak === 3 ? 'winner' : 'correct', performance.now(), { q: S.qId });   // point given (the 3rd in a row: crown)
+  else if (ev.type === 'oops') mascotDir.event('wrong', performance.now(), { q: S.qId });                             // nobody got it
   if (ev.type === 'win' || ev.type === 'test') {
     const st = cardStyle(ev.team), card = document.querySelector(`.card[data-team="${ev.team}"]`);
     const pos = card ? stagePos(card.querySelector('.ring')) : { x: 1431, y: 880 };
@@ -58,11 +58,13 @@ function handleEvent(ev) {
 
 /* ---- 3D mascot: the director picks the state from the game, mascot3d.mjs draws it (flat face if 3D is unavailable) ---- */
 const mascotDir = new MascotDirector();
+let lastSerial = 0;
 setInterval(() => {
   const M = window.Mascot3D; if (!M) return;
   const d = mascotDir.decide(S, performance.now());
   M.lookAt(d.look[0], d.look[1]);
   if (d.timer) M.updateTimer(d.timer[0], d.timer[1]); else M.setState(d.state);
+  if (d.serial && d.serial !== lastSerial) { lastSerial = d.serial; if (M.restart) M.restart(); }   // a new reaction (e.g. a second point) plays again
 }, 120);
 window.mascotHand = color => {                                             // buzz.js: someone raised a hand -> alert, looking at them
   let look = [0, 0];
@@ -70,9 +72,9 @@ window.mascotHand = color => {                                             // bu
     const t = Cam.tracker.tracks.find(x => x.color === color), mir = Cam.cfg().mirror !== false;
     if (t) { const sx = 973 + (mir ? 1 - t.x : t.x) * 917, sy = 35 + t.y * 493; look = [(sx - 960) / 960, (sy - 70) / 540]; }   // from the tab (top centre) to the player on the live feed
   } catch (e) {}
-  mascotDir.event('hand', performance.now(), { look });
+  mascotDir.event('hand', performance.now(), { look, q: S && S.qId });
 };
-CH.addEventListener('message', e => { if (e.data && e.data.type === 'buzz-reopen' && e.data.wrong) mascotDir.event('wrong', performance.now()); });   // host: 'Wrong -> reopen'
+CH.addEventListener('message', e => { if (e.data && e.data.type === 'buzz-reopen' && e.data.wrong) mascotDir.event('wrong', performance.now(), { q: S && S.qId }); });   // host: 'Wrong -> reopen'
 
 /* ---- render ---- */
 function render() {
