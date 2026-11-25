@@ -1,5 +1,6 @@
 /* The floating marker over each head.
-   Normally: a slowly turning 3D diamond (Sims-style plumbob) in the player's color.
+   Normally: the slowly turning 3D AKF lattice logo in the player's color (pre-rendered frames from logo-sprites.mjs;
+   until those are ready, or without WebGL, a turning 3D diamond).
    When that player raises a hand it spins up, shrinks, and POPS into a chunky number in the same color:
    the order they raised their hand (1 = first, 2 = second, ...). morph 0 = diamond, 1 = number. */
 const Kites = (() => {
@@ -42,6 +43,17 @@ const Kites = (() => {
     ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.beginPath(); ctx.arc(sx, sy, Math.max(1.5, size * 0.035), 0, 7); ctx.fill();
   }
 
+  // the 3D logo: pick the pre-rendered frame for the current turning angle
+  function logo(ctx, cx, cy, size, base, ang, t, phase, sp) {
+    const sc = size * 0.5;
+    glow(ctx, cx, cy, sc * 2.1, base, 0.38);
+    const turn = ((ang / (Math.PI * 2)) % 1 + 1) % 1, f = Math.floor(turn * sp.frames) % sp.frames;
+    const d = (size * 1.3) / sp.fill;                                     // the logo is as tall as the diamond was
+    ctx.drawImage(sp.img, f * sp.px, 0, sp.px, sp.px, cx - d / 2, cy - d / 2, d, d);
+    const sa = t * 1.6 + phase, sx = cx + Math.cos(sa) * sc * 0.9, sy = cy - sc * 0.6 + Math.sin(sa * 1.3) * sc * 0.5;
+    ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.beginPath(); ctx.arc(sx, sy, Math.max(1.5, size * 0.035), 0, 7); ctx.fill();
+  }
+
   function number(ctx, cx, cy, size, base, t, phase, text) {
     const ang = Math.sin(t * 0.9 + phase) * 0.7, fs = size * 1.35;
     const sx = Math.cos(ang), dx = Math.sin(ang) * fs * 0.16;
@@ -71,7 +83,9 @@ const Kites = (() => {
     const bob = Math.sin(t * 2.1 + phase) * size * 0.03, cx = x, cy = y + bob;
     if (m < 0.5) {                                              // diamond, spinning faster and shrinking as it changes
       const k = 1 - m * 2;
-      diamond(ctx, cx, cy, size * (0.3 + 0.7 * k), base, t * (0.85 + (1 - k) * 9) + phase, t, phase);
+      const sp = (typeof window !== 'undefined' && window.LogoSprites) ? window.LogoSprites.get(colorHex) : null;
+      const ang = t * (0.85 + (1 - k) * 9) + phase, s = size * (0.3 + 0.7 * k);
+      if (sp) logo(ctx, cx, cy, s, base, ang, t, phase, sp); else diamond(ctx, cx, cy, s, base, ang, t, phase);
     } else {                                                    // number pops in with a little overshoot
       const k = (m - 0.5) * 2;
       number(ctx, cx, cy, size * Math.max(0.05, backOut(k)), base, t, phase, String(label));
