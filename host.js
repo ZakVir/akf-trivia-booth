@@ -110,7 +110,7 @@ function renderHost() {
     return `<div class="pl" style="--c:${TEAMS[t].color}"><div class="nm">${TEAMS[t].name}</div><div class="n">${S.scores[t]}</div>` +
       `<button class="go" data-t="${t}" data-d="1">+1<kbd style="color:#fff;background:rgba(255,255,255,.25);border-color:transparent">${i}</kbd></button>` +
       `<button class="m" data-t="${t}" data-d="-1">-1</button></div>`;
-  }).join('') : `<div class="empty">No players yet. Turn the camera on (Setup ⚙), try Practice mode, or pick a player count below.</div>`;
+  }).join('') : `<div class="empty">No players yet. Turn the camera on (Setup), try Practice mode, or pick a player count below.</div>`;
   $('kid').firstChild.textContent = `Kid wording: ${S.kid ? 'ON' : 'off'}`;
   $('nTeams').innerHTML = [1, 2, 3, 4, 5, 6, 7, 8].map(n => `<option value="${n}" ${n === S.teams.length ? 'selected' : ''}>${n}</option>`).join('');
   $('tDur').value = String(S.timer.duration);
