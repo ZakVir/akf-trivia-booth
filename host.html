@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<script>window.coi = { coepCredentialless: () => false, quiet: true };   /* static hosting (GitHub Pages) has no COOP/COEP headers: this service worker adds them, so multi-threaded detection works. The local server sends them itself (then this does nothing). */</script>
+<script src="coi-serviceworker.min.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AKF Trivia - Host</title>
 <link rel="stylesheet" href="base.css">
