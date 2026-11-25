@@ -38,7 +38,7 @@ MAX_BODY = 4 * 1024 * 1024
 
 def db():
     con = sqlite3.connect(DB_PATH, timeout=5)
-    con.execute("CREATE TABLE IF NOT EXISTS sets (id INTEGER PRIMARY KEY, name TEXT NOT NULL, questions TEXT NOT NULL,"
+    con.execute("CREATE TABLE IF NOT EXISTS sets (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, questions TEXT NOT NULL,"
                 " created REAL NOT NULL, updated REAL NOT NULL)")
     return con
 
@@ -62,6 +62,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def __init__(self, *a, **k):
         super().__init__(*a, directory=ROOT, **k)
+
+    # never serve private files as static content: .env (the NVIDIA key), the question database, dot-folders (.git),
+    # and the server's own code / caches. The database is only reachable through /api/sets and its checks.
+    PRIVATE_EXT = (".db", ".db-journal", ".db-wal", ".db-shm", ".sqlite", ".py", ".pyc", ".env", ".key")
+
+    def send_head(self):
+        parts = [p for p in self.path.split("?")[0].split("#")[0].split("/") if p]
+        from urllib.parse import unquote
+        parts = [unquote(p).lower() for p in parts]
+        if any(p.startswith(".") or p == "__pycache__" or p.endswith(self.PRIVATE_EXT) for p in parts):
+            self.send_error(404, "File not found")
+            return None
+        return super().send_head()
 
     def end_headers(self):
         self.send_header("Cache-Control", "no-store")
@@ -136,7 +149,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._json(400, {"error": "need a name and a list of questions"})
             now = time.time()
             with db() as con:
-                if isinstance(sid, int) and con.execute("SELECT 1 FROM sets WHERE id = ?", (sid,)).fetchone():
+                if sid is not None:                          # an edit: that set must still exist (ids are never reused)
+                    if not isinstance(sid, int) or not con.execute("SELECT 1 FROM sets WHERE id = ?", (sid,)).fetchone():
+                        return self._json(404, {"error": "that set no longer exists"})
                     con.execute("UPDATE sets SET name = ?, questions = ?, updated = ? WHERE id = ?", (name, json.dumps(qs), now, sid))
                 else:
                     sid = con.execute("INSERT INTO sets (name, questions, created, updated) VALUES (?, ?, ?, ?)",
