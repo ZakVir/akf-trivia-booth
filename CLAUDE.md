@@ -26,9 +26,15 @@ Commit, push, review and merge on your own. Never wait for approval to push or m
    - If the PR is a draft: `gh api -X POST repos/ZakVir/akf-trivia-booth/pulls/<n>/ccr/ready_for_review`
    - Merge: `gh api -X PUT repos/ZakVir/akf-trivia-booth/pulls/<n>/merge -f merge_method=merge -f sha=<head sha>`
    - Conflicts: merge `origin/main` into the branch (never rebase or force-push a pushed branch), re-test, push, merge.
+   - Leave merged branches in place (deleting branches is blocked from cloud sessions; it is harmless).
 7. **Cadence**: merge after every finished task, or after 1-2 small features at most when working through a list,
    so `main` is always current and working. Start the next task on a new branch from the new `main`.
 8. Commit messages: first line = imperative summary (< 72 chars); body = what and why in plain words.
    Never put model names in commits/PRs. End with the attribution lines the session asks for.
 9. Real-camera checks happen on the owner's Mac; say what still needs their check in the PR body and the final reply,
    but do not wait for it to merge.
+
+## Hosting
+- Local (the booth): double-click `start.command` -> http://localhost:8787 (server.py sends COOP/COEP).
+- Static link: GitHub Pages from `main` (root) -> https://zakvir.github.io/akf-trivia-booth/ . `coi-serviceworker.min.js`
+  adds COOP/COEP there. Vercel also works (`vercel.json`). The AI question cleanup needs server.py, so it is local-only.
