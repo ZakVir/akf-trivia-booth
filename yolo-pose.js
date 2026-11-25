@@ -137,6 +137,8 @@
   // Without a working WebGPU, inference runs on the CPU (wasm). In the page that blocks the main thread for ~100 ms a
   // frame, which made the whole host page (one window: the live view is an iframe in it) freeze. So wasm runs in
   // onnxruntime's worker (env.wasm.proxy) unless a WebGPU adapter exists. The env is set once per page (first create wins).
+  // A first request for wasm only (cam.js saved that the CPU is quicker on this machine) also means the worker, so the
+  // whole page then stays on the CPU worker (re-ID included); a reload decides again.
   async function wantProxy(ort, providers, isNode) {
     if (isNode || typeof Worker === 'undefined') return false;
     if (root.__ortProxy != null) return root.__ortProxy;
