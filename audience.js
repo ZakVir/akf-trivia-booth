@@ -117,7 +117,10 @@ const podium = new Leaderboard.Podium(), podCtx = $('podium').getContext('2d');
 })(performance.now());
 
 function renderCards() {
-  podium.set(Leaderboard.top3(S.scores, TEAM_ORDER, TEAM_ORDER), performance.now());
+  const top = Leaderboard.top3(S.scores, TEAM_ORDER, TEAM_ORDER);
+  podium.set(top, performance.now());
+  const lbl = top.filter(Boolean).map((t, i) => `${['1st', '2nd', '3rd'][i]} ${(cardStyle(t).name || TEAMS[t].name)}, ${S.scores[t]} point${S.scores[t] === 1 ? '' : 's'}`).join('; ');
+  $('podium').setAttribute('aria-label', 'Leaderboard: ' + (lbl || 'no points yet'));   // screen readers get the standings the podium draws
   const board = S.board || [];
   const teams = (board.length ? CARD_ORDER.filter(t => board.includes(t)) : ['gold', 'green', 'red', 'blue']);   // nobody in view yet: the four teams, as in the design
   const key = teams.join(','), wrap = $('cards');
